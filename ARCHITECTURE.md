@@ -177,7 +177,6 @@ erDiagram
         lookup Supersedes FK "the row this replaces"
         datetime SupersededOn "blank while live"
         text ChangeReason "required on correction or void"
-        bool IsLive "calculated: not superseded and not voided"
         owner OwnerId "the employee's manager"
     }
 
@@ -272,8 +271,12 @@ After the correction three rows exist:
 | 2 | 4 | 2026-09-20 | 2026-09-20 | — | — | Active | Yes |
 | 3 | 2 | 2026-03-15 | 2026-09-21 | #1 | — | Active | Yes |
 
-`IsLive` is a **calculated column**: true when `Superseded On` is blank *and*
-`AssessmentStatus` is Active. Everything downstream keys off it:
+**Live** means `Superseded On` is blank *and* `AssessmentStatus` is Active. This
+is deliberately **not** stored as a column in Dataverse — a stored flag is one
+more thing that can drift out of step with the two columns it summarises. Instead
+it is expressed once in each place it is needed: as a two-condition filter on
+Dataverse views, and as a calculated column `IsLive` in the Power BI semantic
+model (§7.3). Everything downstream keys off it:
 
 - **Power BI trends and the current rating** filter `IsLive = true` — they see
   rows 3 and 2, the corrected timeline (AC-3).
@@ -449,6 +452,15 @@ user changes the axis with a slicer — no duplicated pages.
 This is the analytical heart of the solution. A rating at period end is **the most
 recent live assessment with an effective date on or before that period end** — not
 an average of whatever happened inside the period (FR-TRD-09).
+
+`IsLive` is a calculated column on the fact table, defined once here rather than
+stored in Dataverse (§5.2):
+
+```dax
+IsLive =
+ISBLANK ( 'Skill Assessment'[Superseded On] )
+    && 'Skill Assessment'[Assessment Status] = "Active"
+```
 
 ```dax
 -- Rating for ONE employee-skill as at the end of the current period.
