@@ -1,0 +1,26 @@
+# Local environment and credentials - never commit.
+# The provisioning scripts read secrets from environment variables or prompt
+# interactively; nothing sensitive belongs in this repository.
+.env
+.env.*
+*.pfx
+*.pem
+*.key
+*.p12
+
+# Payload dumps from: New-SkillsSchema.ps1 -ValidateOnly -PayloadOutputPath
+*-payloads.json
+
+# Python bytecode from templates/build_template.py
+__pycache__/
+*.pyc
+
+# Slide renders used for visual review of the deck
+presentation/render/
+
+# Office lock files, created while a document is open
+~$*
+
+# OS noise
+Thumbs.db
+.DS_Store
