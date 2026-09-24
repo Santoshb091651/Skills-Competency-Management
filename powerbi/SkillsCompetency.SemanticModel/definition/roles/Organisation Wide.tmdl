@@ -1,0 +1,10 @@
+/// Unrestricted read, for admins and for managers granted organisation-wide
+/// scope (FR-SEC-04).
+///
+/// No table permissions are declared, which in Power BI means no rows are
+/// filtered out. Membership should be small and reviewed - this role sees every
+/// employee's ratings and history.
+///
+/// Assign the Skills-Admins Entra security group to this role.
+role 'Organisation Wide'
+	modelPermission: read

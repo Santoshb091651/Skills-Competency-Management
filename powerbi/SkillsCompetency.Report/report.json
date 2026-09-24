@@ -1,0 +1,53 @@
+{
+  "config": "{\"version\":\"5.55\",\"themeCollection\":{\"baseTheme\":{\"name\":\"CY24SU10\",\"version\":\"5.55\",\"type\":2}},\"activeSectionIndex\":0,\"defaultDrillFilterOtherVisuals\":true,\"settings\":{\"useStylableVisualContainerHeader\":true,\"defaultFilterActionIsDataFilter\":true,\"useNewFilterPaneExperience\":true,\"allowChangeFilterTypes\":true,\"allowInlineExploration\":false,\"disableFilterPaneSearch\":false,\"useCrossReportDrillthrough\":false}}",
+  "layoutOptimization": 0,
+  "publicCustomVisuals": [],
+  "resourcePackages": [],
+  "sections": [
+    {
+      "name": "OverviewSection",
+      "displayName": "Overview",
+      "displayOption": 1,
+      "filters": "[]",
+      "height": 720.0,
+      "width": 1280.0,
+      "ordinal": 0,
+      "config": "{}",
+      "visualContainers": []
+    },
+    {
+      "name": "EmployeeTrendSection",
+      "displayName": "Employee trend",
+      "displayOption": 1,
+      "filters": "[]",
+      "height": 720.0,
+      "width": 1280.0,
+      "ordinal": 1,
+      "config": "{}",
+      "visualContainers": []
+    },
+    {
+      "name": "SkillTrendSection",
+      "displayName": "Skill trend",
+      "displayOption": 1,
+      "filters": "[]",
+      "height": 720.0,
+      "width": 1280.0,
+      "ordinal": 2,
+      "config": "{}",
+      "visualContainers": []
+    },
+    {
+      "name": "CoverageSection",
+      "displayName": "Coverage and gaps",
+      "displayOption": 1,
+      "filters": "[]",
+      "height": 720.0,
+      "width": 1280.0,
+      "ordinal": 3,
+      "config": "{}",
+      "visualContainers": []
+    }
+  ],
+  "filters": "[]"
+}

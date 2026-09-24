@@ -1,0 +1,15 @@
+/// For the Team Analytics report (AC-9).
+///
+/// A manager sees their whole reporting line, direct and indirect, plus their
+/// own record. The filter lands on the Manager Hierarchy bridge and reaches
+/// Employee through that relationship's bidirectional security filtering.
+///
+/// This mirrors Dataverse Manager hierarchy security. The two are enforced
+/// independently, so a change to the reporting tree must flow to both - which it
+/// does, because both derive from Employee[Manager] (ARCHITECTURE.md 6.3).
+///
+/// Assign the Skills-Managers Entra security group to this role.
+role 'Manager Team'
+	modelPermission: read
+
+	tablePermission 'Manager Hierarchy' = 'Manager Hierarchy'[Manager Email] = LOWER ( USERPRINCIPALNAME () )

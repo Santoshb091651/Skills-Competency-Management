@@ -1,0 +1,5 @@
+/// The Dataverse environment host, without the https:// scheme.
+/// Example: contoso.crm11.dynamics.com
+/// Change this once here and every table follows.
+expression EnvironmentHost = "REPLACE-ME.crm.dynamics.com" meta [IsParameterQuery=true, Type="Text", IsParameterQueryRequired=true]
+	annotation PBI_ResultType = Text

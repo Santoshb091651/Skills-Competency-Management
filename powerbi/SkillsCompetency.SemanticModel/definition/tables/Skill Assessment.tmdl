@@ -1,0 +1,322 @@
+/// The rating timeline (Dataverse table skl_skillassessment) - one row per
+/// rating ever recorded. This is the progression, and it is append-only.
+///
+/// Superseded and voided rows are kept so the history view can show a
+/// correction, but every measure below filters them out via [Is Live], so the
+/// analytics always read the corrected timeline (FR-TRD-10, AC-3).
+table 'Skill Assessment'
+
+	column SkillAssessmentId
+		dataType: string
+		isHidden
+		summarizeBy: none
+		sourceColumn: skl_skillassessmentid
+
+	column EmployeeSkillId
+		dataType: string
+		isHidden
+		summarizeBy: none
+		sourceColumn: skl_employeeskill
+
+	column RatingLevelId
+		dataType: string
+		isHidden
+		summarizeBy: none
+		sourceColumn: skl_ratinglevel
+
+	/// 0 to 5. Not summed anywhere - an average or an as-of value is always what
+	/// is wanted, so implicit aggregation is off.
+	column Rating
+		dataType: int64
+		formatString: 0
+		summarizeBy: none
+		sourceColumn: skl_rating
+
+	/// Business time: the date this rating became true. Backdatable. Every
+	/// as-of measure keys off this column, never off Created On (FR-TRD-08).
+	column 'Effective Date'
+		dataType: dateTime
+		formatString: yyyy-mm-dd
+		summarizeBy: none
+		sourceColumn: skl_effectivedate
+
+	/// System time: when the row was written. Shown alongside the effective date
+	/// so a correction is legible as "recorded in September, effective March"
+	/// (FR-HIS-07).
+	column 'Recorded On'
+		dataType: dateTime
+		formatString: yyyy-mm-dd hh:nn
+		summarizeBy: none
+		sourceColumn: createdon
+
+	column 'Assessed By'
+		dataType: string
+		summarizeBy: none
+		sourceColumn: createdbyname
+
+	/// Free-text justification. Protected by a Dataverse column security
+	/// profile, so this arrives blank unless the refresh identity holds that
+	/// profile (ARCHITECTURE.md 6.2).
+	column Note
+		dataType: string
+		summarizeBy: none
+		sourceColumn: skl_note
+
+	column 'Assessment Status'
+		dataType: string
+		summarizeBy: none
+		sourceColumn: skl_assessmentstatusname
+
+	column Source
+		dataType: string
+		summarizeBy: none
+		sourceColumn: skl_sourcename
+
+	/// Blank while this row is the current version of its rating.
+	column 'Superseded On'
+		dataType: dateTime
+		formatString: yyyy-mm-dd hh:nn
+		summarizeBy: none
+		sourceColumn: skl_supersededon
+
+	column 'Change Reason'
+		dataType: string
+		summarizeBy: none
+		sourceColumn: skl_changereason
+
+	/// Defined once, here, rather than stored in Dataverse - a stored flag is a
+	/// third thing to keep in step with the two columns it summarises
+	/// (ARCHITECTURE.md 5.2).
+	column 'Is Live' =
+			```
+			ISBLANK ( 'Skill Assessment'[Superseded On] )
+			    && 'Skill Assessment'[Assessment Status] = "Active"
+			```
+		dataType: boolean
+		formatString: """TRUE"";""TRUE"";""FALSE"""
+		summarizeBy: none
+
+	// -----------------------------------------------------------------------
+	// The as-of carry-forward measures. This is the analytical heart of the
+	// model: a rating at period end is the most recent live assessment with an
+	// effective date on or before that period end - NOT an average of whatever
+	// happened inside the period. Ratings are sparse, so period-averaging would
+	// show gaps wherever a skill is simply stable (FR-TRD-09, AD-8).
+	// -----------------------------------------------------------------------
+
+	/// Rating for ONE employee-skill as at the end of the period in context.
+	/// Blank when the skill had not been acquired yet, which is what keeps
+	/// pre-acquisition periods empty instead of reading zero.
+	/// Only meaningful inside an iterator over Employee Skill - use
+	/// [Avg Rating As Of] on a visual.
+	measure 'Rating As Of' =
+			```
+			VAR AsOf = MAX ( 'Date'[Date] )
+			VAR LiveOnOrBefore =
+			    CALCULATETABLE (
+			        'Skill Assessment',
+			        REMOVEFILTERS ( 'Date' ),
+			        'Skill Assessment'[Effective Date] <= AsOf,
+			        'Skill Assessment'[Is Live] = TRUE
+			    )
+			VAR LastEffective =
+			    MAXX ( LiveOnOrBefore, 'Skill Assessment'[Effective Date] )
+			RETURN
+			    MAXX (
+			        FILTER ( LiveOnOrBefore, 'Skill Assessment'[Effective Date] = LastEffective ),
+			        'Skill Assessment'[Rating]
+			    )
+			```
+		formatString: 0.00
+		displayFolder: As-of ratings
+		isHidden
+
+	/// Average rating as at period end. Serves both the employee-level trend
+	/// (FR-TRD-01) and the skill-level trend (FR-TRD-03) - what differs is only
+	/// the filter context the visual supplies.
+	measure 'Avg Rating As Of' =
+			```
+			AVERAGEX (
+			    VALUES ( 'Employee Skill'[EmployeeSkillId] ),
+			    [Rating As Of]
+			)
+			```
+		formatString: 0.00
+		displayFolder: As-of ratings
+
+	/// Skills actually held at that point in time, so the count does not include
+	/// skills acquired later (FR-TRD-01).
+	measure 'Skills Held As Of' =
+			```
+			COUNTROWS (
+			    FILTER (
+			        VALUES ( 'Employee Skill'[EmployeeSkillId] ),
+			        NOT ISBLANK ( [Rating As Of] )
+			    )
+			)
+			```
+		formatString: #,##0
+		displayFolder: As-of ratings
+
+	/// People holding the skill in context at that point in time (FR-TRD-03).
+	measure 'Employees Holding As Of' =
+			```
+			COUNTROWS (
+			    FILTER (
+			        VALUES ( 'Employee Skill'[EmployeeId] ),
+			        NOT ISBLANK ( [Rating As Of] )
+			    )
+			)
+			```
+		formatString: #,##0
+		displayFolder: As-of ratings
+
+	// -----------------------------------------------------------------------
+	// Change versus the previous period (FR-TRD-11). Because the Date table is
+	// disconnected, DATEADD shifts the date filter and the measure re-reads
+	// MAX('Date'[Date]) from the shifted context, which is exactly what is
+	// wanted. One measure per granularity; a calculation group would collapse
+	// these into one if Tabular Editor is ever available.
+	// -----------------------------------------------------------------------
+
+	measure 'Avg Rating vs Prev Month' =
+			```
+			VAR CurrentValue = [Avg Rating As Of]
+			VAR PreviousValue =
+			    CALCULATE ( [Avg Rating As Of], DATEADD ( 'Date'[Date], -1, MONTH ) )
+			RETURN
+			    IF (
+			        NOT ISBLANK ( CurrentValue ) && NOT ISBLANK ( PreviousValue ),
+			        CurrentValue - PreviousValue
+			    )
+			```
+		formatString: +0.00;-0.00;0.00
+		displayFolder: Change
+
+	measure 'Avg Rating vs Prev Quarter' =
+			```
+			VAR CurrentValue = [Avg Rating As Of]
+			VAR PreviousValue =
+			    CALCULATE ( [Avg Rating As Of], DATEADD ( 'Date'[Date], -1, QUARTER ) )
+			RETURN
+			    IF (
+			        NOT ISBLANK ( CurrentValue ) && NOT ISBLANK ( PreviousValue ),
+			        CurrentValue - PreviousValue
+			    )
+			```
+		formatString: +0.00;-0.00;0.00
+		displayFolder: Change
+
+	measure 'Avg Rating vs Prev Year' =
+			```
+			VAR CurrentValue = [Avg Rating As Of]
+			VAR PreviousValue =
+			    CALCULATE ( [Avg Rating As Of], DATEADD ( 'Date'[Date], -1, YEAR ) )
+			RETURN
+			    IF (
+			        NOT ISBLANK ( CurrentValue ) && NOT ISBLANK ( PreviousValue ),
+			        CurrentValue - PreviousValue
+			    )
+			```
+		formatString: +0.00;-0.00;0.00
+		displayFolder: Change
+
+	// -----------------------------------------------------------------------
+	// Activity and data-quality measures
+	// -----------------------------------------------------------------------
+
+	measure 'Ratings Recorded' =
+			```
+			CALCULATE (
+			    COUNTROWS ( 'Skill Assessment' ),
+			    'Skill Assessment'[Is Live] = TRUE
+			)
+			```
+		formatString: #,##0
+		displayFolder: Activity
+
+	measure 'Ratings Updated Last 30 Days' =
+			```
+			CALCULATE (
+			    COUNTROWS ( 'Skill Assessment' ),
+			    'Skill Assessment'[Recorded On] >= TODAY () - 30
+			)
+			```
+		formatString: #,##0
+		displayFolder: Activity
+
+	measure 'Corrections Made' =
+			```
+			CALCULATE (
+			    COUNTROWS ( 'Skill Assessment' ),
+			    'Skill Assessment'[Source] = "Correction"
+			)
+			```
+		formatString: #,##0
+		displayFolder: Activity
+
+	measure 'Voided Assessments' =
+			```
+			CALCULATE (
+			    COUNTROWS ( 'Skill Assessment' ),
+			    'Skill Assessment'[Assessment Status] = "Voided"
+			)
+			```
+		formatString: #,##0
+		displayFolder: Activity
+
+	/// Reconciliation control for the risk called out in ARCHITECTURE.md 12:
+	/// without a Power Automate flow, a write that bypasses the app's rating
+	/// screen could leave Employee Skill[Current Rating] stale. This counts the
+	/// employee-skills where the cached value disagrees with the live timeline.
+	/// It should always be zero; if it is not, the derived columns need a rebuild.
+	measure 'Current Rating Mismatches' =
+			```
+			SUMX (
+			    VALUES ( 'Employee Skill'[EmployeeSkillId] ),
+			    VAR Cached = CALCULATE ( MAX ( 'Employee Skill'[Current Rating] ) )
+			    VAR FromTimeline =
+			        CALCULATE (
+			            [Rating As Of],
+			            REMOVEFILTERS ( 'Date' ),
+			            'Date'[Date] = TODAY ()
+			        )
+			    RETURN
+			        IF ( NOT ISBLANK ( FromTimeline ) && Cached <> FromTimeline, 1, 0 )
+			)
+			```
+		formatString: #,##0
+		displayFolder: Data quality
+
+	partition 'Skill Assessment' = m
+		mode: import
+		source = ```
+				let
+				    Source = CommonDataService.Database(EnvironmentHost, [CreateNavigationProperties = false]),
+				    Assessment = Source{[Schema = "dbo", Item = "skl_skillassessment"]}[Data],
+				    Selected = Table.SelectColumns(
+				        Assessment,
+				        {
+				            "skl_skillassessmentid",
+				            "skl_employeeskill",
+				            "skl_ratinglevel",
+				            "skl_rating",
+				            "skl_effectivedate",
+				            "skl_note",
+				            "skl_assessmentstatusname",
+				            "skl_sourcename",
+				            "skl_supersededon",
+				            "skl_changereason",
+				            "createdon",
+				            "createdbyname"
+				        },
+				        MissingField.UseNull
+				    )
+				    // No filtering here on purpose: superseded and voided rows are needed
+				    // for the history and correction visuals. [Is Live] is what the
+				    // analytical measures filter on.
+				in
+				    Selected
+				```
+
+	annotation PBI_ResultType = Table

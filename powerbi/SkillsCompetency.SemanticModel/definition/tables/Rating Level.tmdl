@@ -1,0 +1,58 @@
+/// The 0-5 scale as data (Dataverse table skl_ratinglevel). Six global rows,
+/// each with a label and the written description shown beside a rating
+/// (FR-RAT-02). Editing the wording in Dataverse changes it here on next refresh.
+table 'Rating Level'
+
+	column RatingLevelId
+		dataType: string
+		isHidden
+		summarizeBy: none
+		sourceColumn: skl_ratinglevelid
+
+	/// 0 is the lowest, 5 the highest. Never aggregated - it is a label, not a
+	/// quantity, so summarizeBy is none.
+	column 'Level Value'
+		dataType: int64
+		formatString: 0
+		summarizeBy: none
+		sourceColumn: skl_value
+
+	column 'Level Label'
+		dataType: string
+		summarizeBy: none
+		sourceColumn: skl_label
+		sortByColumn: 'Level Value'
+
+	column 'Level Description'
+		dataType: string
+		summarizeBy: none
+		sourceColumn: skl_description
+
+	/// Ready-made axis label, e.g. "3 - Practitioner".
+	column Level
+		dataType: string
+		summarizeBy: none
+		sourceColumn: skl_name
+		sortByColumn: 'Level Value'
+
+	partition 'Rating Level' = m
+		mode: import
+		source = ```
+				let
+				    Source = CommonDataService.Database(EnvironmentHost, [CreateNavigationProperties = false]),
+				    Level = Source{[Schema = "dbo", Item = "skl_ratinglevel"]}[Data],
+				    Selected = Table.SelectColumns(
+				        Level,
+				        {"skl_ratinglevelid", "skl_value", "skl_label", "skl_description", "skl_name", "skl_isglobal"},
+				        MissingField.UseNull
+				    ),
+				    // Per-category overrides exist for wording only; the global six are the
+				    // dimension the fact table joins to.
+				    GlobalOnly = Table.SelectRows(Selected, each [skl_isglobal] <> false),
+				    Trimmed = Table.RemoveColumns(GlobalOnly, {"skl_isglobal"}),
+				    Sorted = Table.Sort(Trimmed, {{"skl_value", Order.Ascending}})
+				in
+				    Sorted
+				```
+
+	annotation PBI_ResultType = Table

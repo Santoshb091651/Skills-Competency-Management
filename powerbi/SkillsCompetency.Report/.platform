@@ -1,0 +1,11 @@
+{
+  "$schema": "https://developer.microsoft.com/json-schemas/fabric/gitIntegration/platformProperties/2.0.0/schema.json",
+  "metadata": {
+    "type": "Report",
+    "displayName": "SkillsCompetency"
+  },
+  "config": {
+    "version": "2.0",
+    "logicalId": "c2a9f731-05de-4c86-b1f4-9e63d8a70251"
+  }
+}

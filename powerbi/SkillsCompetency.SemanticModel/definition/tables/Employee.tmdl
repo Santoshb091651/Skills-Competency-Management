@@ -1,0 +1,97 @@
+/// Employee master data (Dataverse table skl_employee). Loaded from Excel into
+/// Dataverse; this model only reads it.
+table Employee
+
+	column EmployeeId
+		dataType: string
+		isHidden
+		summarizeBy: none
+		sourceColumn: skl_employeeid
+
+	column 'Employee Code'
+		dataType: string
+		summarizeBy: none
+		sourceColumn: skl_employeecode
+
+	column 'Full Name'
+		dataType: string
+		summarizeBy: none
+		sourceColumn: skl_fullname
+
+	/// Matched against USERPRINCIPALNAME() by the Employee Self security role.
+	column Email
+		dataType: string
+		summarizeBy: none
+		sourceColumn: skl_email
+
+	column Department
+		dataType: string
+		summarizeBy: none
+		sourceColumn: skl_department
+
+	column Designation
+		dataType: string
+		summarizeBy: none
+		sourceColumn: skl_designation
+
+	column Location
+		dataType: string
+		summarizeBy: none
+		sourceColumn: skl_location
+
+	column 'Date Of Joining'
+		dataType: dateTime
+		formatString: yyyy-mm-dd
+		summarizeBy: none
+		sourceColumn: skl_dateofjoining
+
+	column 'Employment Status'
+		dataType: string
+		summarizeBy: none
+		sourceColumn: skl_employmentstatusname
+
+	column ManagerId
+		dataType: string
+		isHidden
+		summarizeBy: none
+		sourceColumn: skl_manager
+
+	column 'Manager Name'
+		dataType: string
+		summarizeBy: none
+		sourceColumn: skl_managername
+
+	partition Employee = m
+		mode: import
+		source = ```
+				let
+				    Source = CommonDataService.Database(EnvironmentHost, [CreateNavigationProperties = false]),
+				    Employee = Source{[Schema = "dbo", Item = "skl_employee"]}[Data],
+				    Selected = Table.SelectColumns(
+				        Employee,
+				        {
+				            "skl_employeeid",
+				            "skl_employeecode",
+				            "skl_fullname",
+				            "skl_email",
+				            "skl_department",
+				            "skl_designation",
+				            "skl_location",
+				            "skl_dateofjoining",
+				            "skl_employmentstatusname",
+				            "skl_manager",
+				            "skl_managername"
+				        },
+				        MissingField.UseNull
+				    ),
+				    // Emails are stored lower-cased in Dataverse, but normalise again so
+				    // the USERPRINCIPALNAME() comparison in row-level security is safe.
+				    Normalised = Table.TransformColumns(
+				        Selected,
+				        {{"skl_email", each if _ = null then null else Text.Lower(Text.Trim(_)), type nullable text}}
+				    )
+				in
+				    Normalised
+				```
+
+	annotation PBI_ResultType = Table

@@ -1,0 +1,11 @@
+/// For the My Skills report (FR-EMP-08, AC-10).
+///
+/// An employee sees only their own record in full - their skills, their
+/// progression and their rating history. The filter lands on Employee and
+/// propagates through the relationships to Employee Skill and Skill Assessment.
+///
+/// Assign the Skills-Employees Entra security group to this role.
+role 'Employee Self'
+	modelPermission: read
+
+	tablePermission Employee = 'Employee'[Email] = LOWER ( USERPRINCIPALNAME () )

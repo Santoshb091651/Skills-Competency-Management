@@ -1,0 +1,101 @@
+/// Row-level security bridge: one row per (employee, manager-anywhere-above-them)
+/// pair, plus a row for each employee against themselves.
+///
+/// Power BI row-level security filters on a single column, so the reporting tree
+/// has to be flattened into pairs. This is the Power BI equivalent of Dataverse
+/// Manager hierarchy security, and the two must stay consistent
+/// (ARCHITECTURE.md 6.3).
+///
+/// Hidden from the field list - it exists only to carry the security filter.
+table 'Manager Hierarchy'
+	isHidden
+
+	column EmployeeId
+		dataType: string
+		isHidden
+		summarizeBy: none
+		sourceColumn: EmployeeId
+
+	/// Compared against USERPRINCIPALNAME() by the Manager Team role.
+	column 'Manager Email'
+		dataType: string
+		isHidden
+		summarizeBy: none
+		sourceColumn: Manager Email
+
+	/// 0 for the employee's own row, 1 for their direct manager, 2 for their
+	/// manager's manager, and so on. Useful for diagnosing the tree.
+	column 'Levels Above'
+		dataType: int64
+		formatString: 0
+		isHidden
+		summarizeBy: none
+		sourceColumn: Levels Above
+
+	partition 'Manager Hierarchy' = m
+		mode: import
+		source = ```
+				let
+				    Source = Employee,
+				    Pairs = Table.SelectColumns(Source, {"skl_employeeid", "skl_manager", "skl_email"}),
+				    // Record-based lookups so walking the tree is a constant-time hop per
+				    // step. A Table.SelectRows per hop would be quadratic and, at a couple
+				    // of thousand employees, noticeably slow on every refresh.
+				    ManagerOfId = Record.FromList(
+				        List.Transform(Pairs[skl_manager], each if _ = null then null else Text.Lower(Text.From(_))),
+				        List.Transform(Pairs[skl_employeeid], each Text.Lower(Text.From(_)))
+				    ),
+				    EmailOfId = Record.FromList(
+				        Pairs[skl_email],
+				        List.Transform(Pairs[skl_employeeid], each Text.Lower(Text.From(_)))
+				    ),
+				    // Every ancestor of one employee, walking upward until there is no
+				    // manager. List.Generate stops on null, so a clean tree terminates; a
+				    // cycle is prevented upstream by the import validation (FR-IMP-10).
+				    AncestorsOf = (startId as text) as list =>
+				        List.Generate(
+				            () => Record.FieldOrDefault(ManagerOfId, startId, null),
+				            (current) => current <> null,
+				            (current) => Record.FieldOrDefault(ManagerOfId, current, null)
+				        ),
+				    Expanded = Table.AddColumn(
+				        Pairs,
+				        "Chain",
+				        each
+				            let
+				                selfId = Text.Lower(Text.From([skl_employeeid])),
+				                ancestors = AncestorsOf(selfId),
+				                // Level 0 is the employee themselves, so a manager sees their
+				                // own record alongside their team.
+				                withSelf = List.Combine({{selfId}, ancestors})
+				            in
+				                List.Transform(
+				                    List.Positions(withSelf),
+				                    (i) => [
+				                        EmployeeId = selfId,
+				                        ManagerEmail = Record.FieldOrDefault(EmailOfId, withSelf{i}, null),
+				                        LevelsAbove = i
+				                    ]
+				                ),
+				        type list
+				    ),
+				    Flattened = Table.ExpandListColumn(Expanded, "Chain"),
+				    Records = Table.SelectColumns(Flattened, {"Chain"}),
+				    AsColumns = Table.ExpandRecordColumn(
+				        Records,
+				        "Chain",
+				        {"EmployeeId", "ManagerEmail", "LevelsAbove"},
+				        {"EmployeeId", "Manager Email", "Levels Above"}
+				    ),
+				    // An employee whose manager has no email contributes nothing usable.
+				    Valid = Table.SelectRows(AsColumns, each [Manager Email] <> null and [Manager Email] <> ""),
+				    Typed = Table.TransformColumnTypes(
+				        Valid,
+				        {{"EmployeeId", type text}, {"Manager Email", type text}, {"Levels Above", Int64.Type}}
+				    ),
+				    Deduped = Table.Distinct(Typed, {"EmployeeId", "Manager Email"})
+				in
+				    Deduped
+				```
+
+	annotation PBI_ResultType = Table

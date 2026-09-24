@@ -1,0 +1,141 @@
+/// Custom calendar. Power BI has no native half-year, which FR-TRD-06 requires,
+/// so the periods are built explicitly here.
+///
+/// This table is deliberately NOT related to Skill Assessment. It supplies the
+/// axis and the slicer; the measures read MAX('Date'[Date]) and apply the date
+/// filter themselves, which is what produces carry-forward behaviour.
+///
+/// Built in Power Query rather than DAX so every table in the model has the same
+/// shape, and so the calendar does not depend on model recalculation.
+table Date
+	dataCategory: Time
+
+	column Date
+		dataType: dateTime
+		isKey
+		formatString: yyyy-mm-dd
+		summarizeBy: none
+		sourceColumn: Date
+
+	column Year
+		dataType: int64
+		formatString: 0
+		summarizeBy: none
+		sourceColumn: Year
+
+	column Month
+		dataType: string
+		summarizeBy: none
+		sourceColumn: Month
+		sortByColumn: 'Month Sort'
+
+	/// yyyymm, so "Jan 2027" sorts after "Dec 2026" rather than alphabetically.
+	column 'Month Sort'
+		dataType: int64
+		formatString: 0
+		isHidden
+		summarizeBy: none
+		sourceColumn: Month Sort
+
+	/// The as-of anchor for a monthly bucket: the last day of the month, or today
+	/// if the month is still in progress.
+	column 'Month End'
+		dataType: dateTime
+		formatString: yyyy-mm-dd
+		isHidden
+		summarizeBy: none
+		sourceColumn: Month End
+
+	column Quarter
+		dataType: string
+		summarizeBy: none
+		sourceColumn: Quarter
+		sortByColumn: 'Quarter Sort'
+
+	column 'Quarter Sort'
+		dataType: int64
+		formatString: 0
+		isHidden
+		summarizeBy: none
+		sourceColumn: Quarter Sort
+
+	column 'Quarter End'
+		dataType: dateTime
+		formatString: yyyy-mm-dd
+		isHidden
+		summarizeBy: none
+		sourceColumn: Quarter End
+
+	/// H1 is January to June, H2 is July to December.
+	column Half
+		dataType: string
+		summarizeBy: none
+		sourceColumn: Half
+		sortByColumn: 'Half Sort'
+
+	column 'Half Sort'
+		dataType: int64
+		formatString: 0
+		isHidden
+		summarizeBy: none
+		sourceColumn: Half Sort
+
+	column 'Half End'
+		dataType: dateTime
+		formatString: yyyy-mm-dd
+		isHidden
+		summarizeBy: none
+		sourceColumn: Half End
+
+	column 'Year End'
+		dataType: dateTime
+		formatString: yyyy-mm-dd
+		isHidden
+		summarizeBy: none
+		sourceColumn: Year End
+
+	/// Lets a report default to "up to today" without hard-coding a date.
+	column 'Is Past'
+		dataType: boolean
+		formatString: """TRUE"";""TRUE"";""FALSE"""
+		isHidden
+		summarizeBy: none
+		sourceColumn: Is Past
+
+	partition Date = m
+		mode: import
+		source = ```
+				let
+				    StartDate = #date(2020, 1, 1),
+				    Today = DateTime.Date(DateTime.FixedLocalNow()),
+				    // One year beyond today so a target date or a forward-looking slicer
+				    // still has somewhere to land.
+				    EndDate = Date.EndOfYear(Date.AddYears(Today, 1)),
+				    DayCount = Duration.Days(EndDate - StartDate) + 1,
+				    Dates = List.Dates(StartDate, DayCount, #duration(1, 0, 0, 0)),
+				    AsTable = Table.FromList(Dates, Splitter.SplitByNothing(), {"Date"}),
+				    Typed = Table.TransformColumnTypes(AsTable, {{"Date", type date}}),
+				    Added = Table.AddColumn(Typed, "Year", each Date.Year([Date]), Int64.Type),
+				    WithMonth = Table.AddColumn(Added, "Month", each Date.ToText([Date], "MMM yyyy", "en-US"), type text),
+				    WithMonthSort = Table.AddColumn(WithMonth, "Month Sort", each Date.Year([Date]) * 100 + Date.Month([Date]), Int64.Type),
+				    WithMonthEnd = Table.AddColumn(WithMonthSort, "Month End", each Date.EndOfMonth([Date]), type date),
+				    WithQuarter = Table.AddColumn(WithMonthEnd, "Quarter", each "Q" & Text.From(Date.QuarterOfYear([Date])) & " " & Text.From(Date.Year([Date])), type text),
+				    WithQuarterSort = Table.AddColumn(WithQuarter, "Quarter Sort", each Date.Year([Date]) * 10 + Date.QuarterOfYear([Date]), Int64.Type),
+				    WithQuarterEnd = Table.AddColumn(WithQuarterSort, "Quarter End", each Date.EndOfQuarter([Date]), type date),
+				    WithHalfNo = Table.AddColumn(WithQuarterEnd, "Half No", each if Date.Month([Date]) <= 6 then 1 else 2, Int64.Type),
+				    WithHalf = Table.AddColumn(WithHalfNo, "Half", each "H" & Text.From([Half No]) & " " & Text.From(Date.Year([Date])), type text),
+				    WithHalfSort = Table.AddColumn(WithHalf, "Half Sort", each Date.Year([Date]) * 10 + [Half No], Int64.Type),
+				    WithHalfEnd = Table.AddColumn(
+				        WithHalfSort,
+				        "Half End",
+				        each if [Half No] = 1 then #date(Date.Year([Date]), 6, 30) else #date(Date.Year([Date]), 12, 31),
+				        type date
+				    ),
+				    WithYearEnd = Table.AddColumn(WithHalfEnd, "Year End", each Date.EndOfYear([Date]), type date),
+				    WithIsPast = Table.AddColumn(WithYearEnd, "Is Past", each [Date] <= Today, type logical),
+				    Cleaned = Table.RemoveColumns(WithIsPast, {"Half No"})
+				in
+				    Cleaned
+				```
+
+	annotation PBI_ResultType = Table

@@ -1,0 +1,59 @@
+/// The skill catalog (Dataverse table skl_skill). Deprecated skills are kept so
+/// history that references them still resolves (FR-CAT-07).
+table Skill
+
+	column SkillId
+		dataType: string
+		isHidden
+		summarizeBy: none
+		sourceColumn: skl_skillid
+
+	column 'Skill Name'
+		dataType: string
+		summarizeBy: none
+		sourceColumn: skl_name
+
+	column 'Skill Description'
+		dataType: string
+		summarizeBy: none
+		sourceColumn: skl_description
+
+	column Aliases
+		dataType: string
+		summarizeBy: none
+		sourceColumn: skl_aliases
+
+	column 'Skill Status'
+		dataType: string
+		summarizeBy: none
+		sourceColumn: skl_statusname
+
+	column CategoryId
+		dataType: string
+		isHidden
+		summarizeBy: none
+		sourceColumn: skl_category
+
+	partition Skill = m
+		mode: import
+		source = ```
+				let
+				    Source = CommonDataService.Database(EnvironmentHost, [CreateNavigationProperties = false]),
+				    Skill = Source{[Schema = "dbo", Item = "skl_skill"]}[Data],
+				    Selected = Table.SelectColumns(
+				        Skill,
+				        {
+				            "skl_skillid",
+				            "skl_name",
+				            "skl_description",
+				            "skl_aliases",
+				            "skl_statusname",
+				            "skl_category"
+				        },
+				        MissingField.UseNull
+				    )
+				in
+				    Selected
+				```
+
+	annotation PBI_ResultType = Table

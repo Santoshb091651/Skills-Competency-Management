@@ -1,0 +1,160 @@
+/// One row per employee per skill, holding current state
+/// (Dataverse table skl_employeeskill).
+///
+/// The rating columns here are the app's cache of the latest live assessment.
+/// The as-of measures do NOT read them - they recompute from the timeline, so a
+/// backdated correction reshapes history correctly. These columns are for
+/// "where are we now" visuals, where reading a single column is far cheaper.
+table 'Employee Skill'
+
+	column EmployeeSkillId
+		dataType: string
+		isHidden
+		summarizeBy: none
+		sourceColumn: skl_employeeskillid
+
+	column EmployeeId
+		dataType: string
+		isHidden
+		summarizeBy: none
+		sourceColumn: skl_employee
+
+	column SkillId
+		dataType: string
+		isHidden
+		summarizeBy: none
+		sourceColumn: skl_skill
+
+	/// Current state only. For a point in time, use [Avg Rating As Of].
+	column 'Current Rating'
+		dataType: int64
+		formatString: 0
+		summarizeBy: none
+		sourceColumn: skl_currentrating
+
+	column 'First Acquired On'
+		dataType: dateTime
+		formatString: yyyy-mm-dd
+		summarizeBy: none
+		sourceColumn: skl_firstacquiredon
+
+	column 'Last Assessed On'
+		dataType: dateTime
+		formatString: yyyy-mm-dd
+		summarizeBy: none
+		sourceColumn: skl_lastassessedon
+
+	column 'Target Rating'
+		dataType: int64
+		formatString: 0
+		summarizeBy: none
+		sourceColumn: skl_targetrating
+
+	column 'Target Date'
+		dataType: dateTime
+		formatString: yyyy-mm-dd
+		summarizeBy: none
+		sourceColumn: skl_targetdate
+
+	column Status
+		dataType: string
+		summarizeBy: none
+		sourceColumn: skl_statusname
+
+	/// Months since the last assessment, for the staleness panel (FR-DSH-04).
+	column 'Months Since Assessed' =
+			```
+			IF (
+			    NOT ISBLANK ( 'Employee Skill'[Last Assessed On] ),
+			    DATEDIFF ( 'Employee Skill'[Last Assessed On], TODAY (), MONTH )
+			)
+			```
+		dataType: int64
+		formatString: 0
+		summarizeBy: none
+
+	/// How far short of the target this skill currently sits. Blank when no
+	/// target has been set (FR-SKL-11).
+	column 'Target Gap' =
+			```
+			IF (
+			    NOT ISBLANK ( 'Employee Skill'[Target Rating] ),
+			    'Employee Skill'[Target Rating] - 'Employee Skill'[Current Rating]
+			)
+			```
+		dataType: int64
+		formatString: 0
+		summarizeBy: none
+
+	measure 'Skills Tracked' = COUNTROWS ( 'Employee Skill' )
+		formatString: #,##0
+		displayFolder: Current state
+
+	measure 'Current Avg Rating' = AVERAGE ( 'Employee Skill'[Current Rating] )
+		formatString: 0.00
+		displayFolder: Current state
+
+	measure 'Skills At 4 Plus' =
+			```
+			CALCULATE (
+			    COUNTROWS ( 'Employee Skill' ),
+			    'Employee Skill'[Current Rating] >= 4
+			)
+			```
+		formatString: #,##0
+		displayFolder: Current state
+
+	/// People rated 3 or above on the skill in context. The skill-gap page
+	/// compares this against the GAP_MIN_PEOPLE threshold (FR-DSH-03).
+	measure 'People At 3 Plus' =
+			```
+			CALCULATE (
+			    DISTINCTCOUNT ( 'Employee Skill'[EmployeeId] ),
+			    'Employee Skill'[Current Rating] >= 3
+			)
+			```
+		formatString: #,##0
+		displayFolder: Current state
+
+	measure 'Stale Skills' =
+			```
+			VAR Threshold = 6
+			RETURN
+			    CALCULATE (
+			        COUNTROWS ( 'Employee Skill' ),
+			        'Employee Skill'[Months Since Assessed] >= Threshold
+			    )
+			```
+		formatString: #,##0
+		displayFolder: Current state
+
+	partition 'Employee Skill' = m
+		mode: import
+		source = ```
+				let
+				    Source = CommonDataService.Database(EnvironmentHost, [CreateNavigationProperties = false]),
+				    EmployeeSkill = Source{[Schema = "dbo", Item = "skl_employeeskill"]}[Data],
+				    Selected = Table.SelectColumns(
+				        EmployeeSkill,
+				        {
+				            "skl_employeeskillid",
+				            "skl_employee",
+				            "skl_skill",
+				            "skl_currentrating",
+				            "skl_firstacquiredon",
+				            "skl_lastassessedon",
+				            "skl_targetrating",
+				            "skl_targetdate",
+				            "skl_statusname"
+				        },
+				        MissingField.UseNull
+				    ),
+				    // Archived skills keep their history but leave current-state visuals
+				    // (FR-SKL-10). The timeline table is left unfiltered so past trends
+				    // still include the period when the skill was active.
+				    ActiveOnly = Table.SelectRows(Selected, each [skl_statusname] <> "Archived")
+				in
+				    ActiveOnly
+				```
+
+	annotation PBI_ResultType = Table

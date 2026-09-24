@@ -1,0 +1,41 @@
+/// Employee 1 -> * Employee Skill
+relationship Employee_EmployeeSkill
+	fromColumn: 'Employee Skill'.EmployeeId
+	toColumn: Employee.EmployeeId
+
+/// Skill 1 -> * Employee Skill
+relationship Skill_EmployeeSkill
+	fromColumn: 'Employee Skill'.SkillId
+	toColumn: Skill.SkillId
+
+/// Skill Category 1 -> * Skill
+relationship SkillCategory_Skill
+	fromColumn: Skill.CategoryId
+	toColumn: 'Skill Category'.SkillCategoryId
+
+/// Employee Skill 1 -> * Skill Assessment. This is the timeline: every
+/// assessment belongs to exactly one employee-skill pair.
+relationship EmployeeSkill_SkillAssessment
+	fromColumn: 'Skill Assessment'.EmployeeSkillId
+	toColumn: 'Employee Skill'.EmployeeSkillId
+
+/// Rating Level 1 -> * Skill Assessment, so a visual can group by the level
+/// label and show its description.
+relationship RatingLevel_SkillAssessment
+	fromColumn: 'Skill Assessment'.RatingLevelId
+	toColumn: 'Rating Level'.RatingLevelId
+
+/// Row-level security bridge. Bidirectional security filtering is what lets a
+/// filter on Manager Hierarchy[Manager Email] propagate up to Employee and from
+/// there through the rest of the model (ARCHITECTURE.md 6.3).
+relationship ManagerHierarchy_Employee
+	fromColumn: 'Manager Hierarchy'.EmployeeId
+	toColumn: Employee.EmployeeId
+	crossFilteringBehavior: bothDirections
+	securityFilteringBehavior: bothDirections
+
+/// There is deliberately NO relationship between Date and Skill Assessment.
+/// An active join would answer "which assessments happened in March"; every
+/// requirement here asks "what was the rating as at the end of March". The
+/// measures apply the date filter themselves, which is what makes a rating
+/// carry forward across periods with no assessment (ARCHITECTURE.md 7.1).
