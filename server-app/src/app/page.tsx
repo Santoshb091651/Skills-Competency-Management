@@ -1,19 +1,38 @@
 import Link from 'next/link';
 import { prisma } from '@/lib/db';
+import {
+  categoryTrend,
+  distributionTrend,
+  organisationTrend,
+  parseGranularity,
+} from '@/lib/services/trends';
+import {
+  AverageRatingTrend,
+  CategoryTrend,
+  DistributionTrend,
+  SkillsHeldTrend,
+} from '@/components/charts';
+import { GranularityPicker } from '@/components/granularity-picker';
 import { Card, Empty, Panel, RatingBadge, Td, Th, formatDate } from '@/components/ui';
 
-export default async function DashboardPage() {
-  // A fresh clone that has not been seeded should explain itself rather than
-  // render a wall of zeroes.
-  let stats;
+export const dynamic = 'force-dynamic';
+
+export default async function DashboardPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ granularity?: string }>;
+}) {
+  const granularity = parseGranularity((await searchParams).granularity);
+
+  let data;
   try {
-    stats = await loadStats();
+    data = await loadDashboard(granularity);
   } catch (error) {
     return (
       <Panel title="Cannot reach the database">
         <p className="text-sm">
-          The app is running but could not query PostgreSQL. Check that the{' '}
-          <code>db</code> container is up and that migrations have been applied.
+          The app is running but could not query PostgreSQL. Check that the <code>db</code>{' '}
+          container is up and that migrations have been applied.
         </p>
         <pre className="mt-3 overflow-x-auto rounded bg-[var(--color-panel)] p-3 text-xs">
           {error instanceof Error ? error.message : String(error)}
@@ -22,15 +41,34 @@ export default async function DashboardPage() {
     );
   }
 
-  const { employees, skills, assessments, avgRating, recent, topSkills } = stats;
+  const {
+    employees,
+    skills,
+    assessments,
+    avgRating,
+    recent,
+    topSkills,
+    trend,
+    categories,
+    distribution,
+    levelLabels,
+  } = data;
+
+  const latest = trend.at(-1);
+  const previous = trend.at(-2);
+  const delta =
+    latest && previous ? Number((latest.avgRating - previous.avgRating).toFixed(2)) : null;
 
   return (
     <div className="space-y-6">
-      <div>
-        <h1 className="text-2xl font-bold text-[var(--color-primary-dark)]">Dashboard</h1>
-        <p className="mt-1 text-sm text-[var(--color-muted)]">
-          Skills, ratings and progression across the organisation.
-        </p>
+      <div className="flex flex-wrap items-end justify-between gap-4">
+        <div>
+          <h1 className="text-2xl font-bold text-[var(--color-primary-dark)]">Dashboard</h1>
+          <p className="mt-1 text-sm text-[var(--color-muted)]">
+            Competency across the organisation, and how it is moving.
+          </p>
+        </div>
+        <GranularityPicker current={granularity} basePath="/" />
       </div>
 
       {employees === 0 && (
@@ -47,8 +85,49 @@ export default async function DashboardPage() {
         <Card title="Employees" value={employees} />
         <Card title="Skills in catalog" value={skills} />
         <Card title="Ratings recorded" value={assessments} hint="live assessments only" />
-        <Card title="Average rating" value={avgRating === null ? '—' : avgRating.toFixed(2)} hint="across active skills" />
+        <Card
+          title="Average rating"
+          value={avgRating === null ? '—' : avgRating.toFixed(2)}
+          hint={
+            delta === null
+              ? 'across active skills'
+              : `${delta >= 0 ? '+' : ''}${delta.toFixed(2)} vs previous period`
+          }
+        />
       </div>
+
+      <div className="grid gap-6 lg:grid-cols-2">
+        <Panel title="Average rating over time">
+          <p className="mb-2 text-xs text-[var(--color-muted)]">
+            Each point is the state as at the end of that period. A rating carries forward until
+            the next assessment, so a flat line means stable, not missing.
+          </p>
+          <AverageRatingTrend data={trend} />
+        </Panel>
+
+        <Panel title="Skills held over time">
+          <p className="mb-2 text-xs text-[var(--color-muted)]">
+            Total employee-skill pairs in place at the end of each period. Growth here is the
+            organisation acquiring capability, not ratings improving.
+          </p>
+          <SkillsHeldTrend data={trend} />
+        </Panel>
+      </div>
+
+      <Panel title="Average rating by category">
+        <p className="mb-2 text-xs text-[var(--color-muted)]">
+          Where capability is deepening and where it is flat.
+        </p>
+        <CategoryTrend data={categories.data} categories={categories.categories} />
+      </Panel>
+
+      <Panel title="Rating distribution over time">
+        <p className="mb-2 text-xs text-[var(--color-muted)]">
+          How many skills sit at each level. A base that shifts upward is people progressing;
+          a base that simply grows is new skills being added at low levels.
+        </p>
+        <DistributionTrend data={distribution} levelLabels={levelLabels} />
+      </Panel>
 
       <div className="grid gap-6 lg:grid-cols-2">
         <Panel title="Most widely held skills">
@@ -59,23 +138,21 @@ export default async function DashboardPage() {
               <thead>
                 <tr>
                   <Th>Skill</Th>
-                  <Th>People</Th>
+                  <Th className="text-right">People</Th>
                   <Th>Average</Th>
                 </tr>
               </thead>
               <tbody>
                 {topSkills.map((row) => (
                   <tr key={row.skillId}>
+                    <Td>{row.name}</Td>
+                    <Td className="text-right">{row.people}</Td>
                     <Td>
-                      <Link href={`/skills`} className="text-[var(--color-primary)] hover:underline">
-                        {row.name}
-                      </Link>
-                    </Td>
-                    <Td>{row.people}</Td>
-                    <Td>
-                      <RatingBadge value={Math.round(row.avg)} />
-                      <span className="ml-2 text-xs text-[var(--color-muted)]">
-                        {row.avg.toFixed(2)}
+                      <span className="inline-flex items-center gap-2">
+                        <RatingBadge value={Math.round(row.avg)} />
+                        <span className="text-xs text-[var(--color-muted)]">
+                          {row.avg.toFixed(2)}
+                        </span>
                       </span>
                     </Td>
                   </tr>
@@ -125,20 +202,28 @@ export default async function DashboardPage() {
   );
 }
 
-async function loadStats() {
-  const [employees, skills, assessments, ratingAgg] = await Promise.all([
+async function loadDashboard(granularity: ReturnType<typeof parseGranularity>) {
+  const [employees, skills, assessments, ratingAgg, levels] = await Promise.all([
     prisma.employee.count({ where: { employmentStatus: 'ACTIVE' } }),
     prisma.skill.count({ where: { status: 'ACTIVE' } }),
     prisma.skillAssessment.count({ where: { supersededAt: null, status: 'ACTIVE' } }),
-    prisma.employeeSkill.aggregate({
-      where: { status: 'ACTIVE' },
-      _avg: { currentRating: true },
+    prisma.employeeSkill.aggregate({ where: { status: 'ACTIVE' }, _avg: { currentRating: true } }),
+    prisma.ratingLevel.findMany({
+      where: { categoryId: null },
+      orderBy: { value: 'asc' },
+      select: { value: true, label: true },
     }),
+  ]);
+
+  const [trend, categories, distribution] = await Promise.all([
+    organisationTrend(granularity),
+    categoryTrend(granularity),
+    distributionTrend(granularity),
   ]);
 
   const recentRows = await prisma.skillAssessment.findMany({
     where: { supersededAt: null, status: 'ACTIVE' },
-    orderBy: [{ createdAt: 'desc' }],
+    orderBy: [{ createdAt: 'desc' }, { effectiveDate: 'desc' }],
     take: 8,
     select: {
       id: true,
@@ -153,8 +238,6 @@ async function loadStats() {
     },
   });
 
-  // Top skills by how many people hold them. Grouping in the database keeps
-  // this a single round trip regardless of catalog size.
   const grouped = await prisma.employeeSkill.groupBy({
     by: ['skillId'],
     where: { status: 'ACTIVE' },
@@ -175,6 +258,10 @@ async function loadStats() {
     skills,
     assessments,
     avgRating: ratingAgg._avg.currentRating,
+    trend,
+    categories,
+    distribution,
+    levelLabels: Object.fromEntries(levels.map((l) => [l.value, l.label])) as Record<number, string>,
     recent: recentRows.map((row) => ({
       id: row.id,
       rating: row.rating,

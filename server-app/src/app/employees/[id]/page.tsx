@@ -1,15 +1,21 @@
 import { notFound } from 'next/navigation';
 import { prisma } from '@/lib/db';
+import { employeeSkillTrend, employeeTrend, parseGranularity } from '@/lib/services/trends';
+import { AverageRatingTrend, SkillStepTrend } from '@/components/charts';
+import { GranularityPicker } from '@/components/granularity-picker';
 import { Card, Crumb, Empty, Panel, RatingBadge, Td, Th, formatDate } from '@/components/ui';
 
 export const dynamic = 'force-dynamic';
 
 export default async function EmployeeProfilePage({
   params,
+  searchParams,
 }: {
   params: Promise<{ id: string }>;
+  searchParams: Promise<{ granularity?: string }>;
 }) {
   const { id } = await params;
+  const granularity = parseGranularity((await searchParams).granularity);
 
   const employee = await prisma.employee.findUnique({
     where: { id },
@@ -73,6 +79,11 @@ export default async function EmployeeProfilePage({
   });
   const labelFor = new Map(levels.map((l) => [l.value, l.label]));
 
+  const [trend, skillSeries] = await Promise.all([
+    employeeTrend(id, granularity),
+    employeeSkillTrend(id, granularity),
+  ]);
+
   return (
     <div className="space-y-6">
       <Crumb href="/employees">← All employees</Crumb>
@@ -95,6 +106,33 @@ export default async function EmployeeProfilePage({
         <Card title="Average rating" value={average === null ? '—' : average.toFixed(2)} />
         <Card title="At level 4+" value={atFourPlus} />
         <Card title="History entries" value={timeline.length} />
+      </div>
+
+      <div className="flex items-center justify-between">
+        <h2 className="text-sm font-bold uppercase tracking-wide text-[var(--color-muted)]">
+          Progression
+        </h2>
+        <GranularityPicker
+          current={granularity}
+          basePath={`/employees/${employee.id}`}
+        />
+      </div>
+
+      <div className="grid gap-6 lg:grid-cols-2">
+        <Panel title="Average rating over time">
+          <p className="mb-2 text-xs text-[var(--color-muted)]">
+            This person&rsquo;s average across the skills they held at the end of each period.
+          </p>
+          <AverageRatingTrend data={trend} />
+        </Panel>
+
+        <Panel title="Per-skill progression">
+          <p className="mb-2 text-xs text-[var(--color-muted)]">
+            The {skillSeries.skills.length} skills that moved most, drawn as steps: a rating holds
+            its value until the next assessment rather than drifting between them.
+          </p>
+          <SkillStepTrend data={skillSeries.data} skills={skillSeries.skills} />
+        </Panel>
       </div>
 
       <Panel title="Skills">

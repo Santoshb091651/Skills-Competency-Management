@@ -47,16 +47,48 @@ the app was developed on, so the mechanism is tested.
 
 | Page | Contents |
 |---|---|
-| `/` | Headline counts, the most widely held skills, and recent rating activity. |
+| `/` | Headline counts, **four trend charts**, most widely held skills, recent activity. |
 | `/employees` | Directory with search and a department filter. Filters live in the URL, so a filtered view is shareable. |
-| `/employees/{id}` | Profile: current skills with ratings, and the **full history** — every rating ever recorded, including entries later corrected or voided. |
+| `/employees/{id}` | Profile: **progression charts**, current skills with ratings, and the **full history** — every rating ever recorded, including entries later corrected or voided. |
 | `/skills` | Catalog by category, the 0–5 rating scale with its written definitions, and coverage per skill. Skills with fewer than two people at level 3+ are flagged. |
 | `/api/health` | Liveness and database connectivity. Used by the container healthcheck. |
 
-The history page is the one worth looking at. The seed deliberately includes
-one **correction** and one **void** so the append-only model is visible rather
-than merely described: the original row is still there, marked superseded or
-struck through, with the reason it was changed.
+### The trend charts
+
+Average rating over time, skills held over time, average by category, and the
+rating distribution — each switchable between **monthly, quarterly, half-yearly
+and yearly** (FR-TRD-06). The employee profile adds that person's own average
+plus a per-skill step chart.
+
+The granularity choice lives in the URL, so a particular view is shareable and
+the back button behaves.
+
+### Two things the charts get right, and why it matters
+
+**Ratings carry forward.** A point is the most recent live assessment effective
+on or before the end of that period — not an average of what happened inside it.
+People are reassessed every few months at best, so bucket-averaging would show a
+gap in every quiet period and make a stable skill look like missing data. A flat
+line here means stable, which is the truth.
+
+**Periods before a skill was acquired are empty, not zero.** Zero is a real
+rating meaning "assessed as none"; absence of a rating is a different fact and
+is drawn differently.
+
+Per-skill lines are drawn as **steps** rather than curves, because a rating held
+its value until the next assessment. A smooth interpolation would imply
+measurements that were never taken.
+
+The same rule is implemented in DAX in the Power BI model
+([`../powerbi`](../powerbi/README.md), measure `[Rating As Of]`). If you change
+the semantics in `src/lib/services/trends.ts`, change them there too.
+
+### The history page
+
+Worth a look. The seed deliberately includes one **correction** and one **void**
+so the append-only model is visible rather than merely described: the original
+row is still there, marked superseded or struck through, with the reason it was
+changed. It is also why the dashboard reads 182 live ratings out of 183 seeded.
 
 ---
 

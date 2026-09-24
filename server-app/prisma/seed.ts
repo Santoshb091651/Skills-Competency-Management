@@ -208,22 +208,48 @@ function monthsAgo(months: number): Date {
   return result;
 }
 
+/** Stable hash, so the generated history is varied but identical on every run. */
+function hash(value: string): number {
+  let result = 2166136261;
+  for (let i = 0; i < value.length; i++) {
+    result ^= value.charCodeAt(i);
+    result = Math.imul(result, 16777619);
+  }
+  return Math.abs(result);
+}
+
 /**
  * Builds a plausible progression for one skill: the employee starts a level or
  * two below where they are now and improves in steps, so trend charts have a
  * shape instead of a flat line.
+ *
+ * The timing is staggered per employee-skill. Without that everyone improves on
+ * the same dates, every line moves in lockstep, and the charts look synthetic —
+ * which also hides the carry-forward behaviour they exist to demonstrate.
  */
-function progressionFor(current: number): Array<{ rating: number; monthsAgo: number }> {
-  if (current <= 1) return [{ rating: current, monthsAgo: 8 }];
+function progressionFor(
+  current: number,
+  key: string,
+): Array<{ rating: number; monthsAgo: number }> {
+  const seed = hash(key);
 
-  const start = Math.max(0, current - 2);
+  if (current <= 1) return [{ rating: current, monthsAgo: 6 + (seed % 10) }];
+
+  // Some people arrive further along than others.
+  const depth = current >= 4 ? 2 + (seed % 2) : 2;
+  const start = Math.max(0, current - depth);
+
+  // First assessment somewhere between 14 and 25 months ago.
+  let offset = 14 + (seed % 12);
   const steps: Array<{ rating: number; monthsAgo: number }> = [];
-  let offset = 22;
 
   for (let rating = start; rating <= current; rating++) {
     steps.push({ rating, monthsAgo: offset });
-    offset = Math.max(1, offset - Math.round(18 / Math.max(1, current - start)));
+    // Gaps of three to eight months between reassessments.
+    const gap = 3 + ((seed >> (rating + 1)) % 6);
+    offset = Math.max(1, offset - gap);
   }
+
   return steps;
 }
 
@@ -331,7 +357,7 @@ async function main() {
       const skillId = skillIds.get(skillName);
       if (!skillId) throw new Error(`Unknown skill '${skillName}' for ${person.code}`);
 
-      const steps = progressionFor(currentRating);
+      const steps = progressionFor(currentRating, `${person.code}:${skillName}`);
       const firstAcquired = dateOnly(monthsAgo(steps[0]!.monthsAgo).toISOString().slice(0, 10));
 
       const employeeSkill = await prisma.employeeSkill.upsert({
