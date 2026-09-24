@@ -1,3 +1,12 @@
+# Zero-configuration demo stack.
+#
+#   docker compose up --build -d
+#   open http://localhost:3000
+#
+# No .env file is needed: every value below has a working default. Create a
+# .env (see .env.example) only when you want to override something, such as
+# pointing at a real Entra ID tenant.
+
 services:
   db:
     image: postgres:16-alpine
@@ -7,24 +16,31 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-skills_dev_password}
       POSTGRES_DB: ${POSTGRES_DB:-skills}
     ports:
-      # Exposed so `npm run dev` on the host can reach it. Bound to loopback only.
-      - '127.0.0.1:5432:5432'
+      # Loopback only, so the database is never exposed beyond this machine.
+      # Change the host port if 5432 is already in use locally.
+      - '127.0.0.1:${DB_PORT:-5432}:5432'
     volumes:
       - db_data:/var/lib/postgresql/data
     healthcheck:
       test: ['CMD-SHELL', 'pg_isready -U ${POSTGRES_USER:-skills} -d ${POSTGRES_DB:-skills}']
       interval: 5s
       timeout: 5s
-      retries: 10
+      retries: 20
 
-  # One-shot migration runner. Kept separate from `web` so the Prisma CLI and its
-  # transitive dependencies stay out of the long-running runtime image.
+  # Runs once, then exits. Applies migrations and, unless told otherwise, loads
+  # the demo data so the dashboard has something to show. Kept separate from
+  # `web` so the Prisma CLI and its dependencies stay out of the runtime image.
   migrate:
     build:
       context: .
       target: migrator
     environment:
-      DATABASE_URL: ${DATABASE_URL}
+      # Deliberately NOT ${DATABASE_URL}. Compose automatically reads the .env
+      # file beside this one, and that file holds the *host* connection string
+      # pointing at localhost — which is unreachable from inside a container.
+      # Using a distinct name keeps the two from colliding.
+      DATABASE_URL: ${COMPOSE_DATABASE_URL:-postgresql://skills:skills_dev_password@db:5432/skills?schema=public}
+      SEED_DEMO_DATA: ${SEED_DEMO_DATA:-true}
     depends_on:
       db:
         condition: service_healthy
@@ -36,20 +52,31 @@ services:
       target: runner
     restart: unless-stopped
     environment:
-      DATABASE_URL: ${DATABASE_URL}
-      AUTH_SECRET: ${AUTH_SECRET}
-      AUTH_URL: ${AUTH_URL}
-      AUTH_MICROSOFT_ENTRA_ID_ID: ${AUTH_MICROSOFT_ENTRA_ID_ID}
-      AUTH_MICROSOFT_ENTRA_ID_SECRET: ${AUTH_MICROSOFT_ENTRA_ID_SECRET}
-      AUTH_MICROSOFT_ENTRA_ID_ISSUER: ${AUTH_MICROSOFT_ENTRA_ID_ISSUER}
-      ADMIN_BOOTSTRAP_EMAILS: ${ADMIN_BOOTSTRAP_EMAILS}
+      # See the note on the migrate service: inside the compose network the
+      # database host is always `db`, never localhost.
+      DATABASE_URL: ${COMPOSE_DATABASE_URL:-postgresql://skills:skills_dev_password@db:5432/skills?schema=public}
+
+      # --- Demo sign-in -----------------------------------------------------
+      # DEMO_MODE bypasses single sign-on entirely and signs everyone in as
+      # AUTH_DEV_USER. Remove both before any real deployment; without
+      # DEMO_MODE the app requires a configured Entra ID tenant.
+      DEMO_MODE: ${DEMO_MODE:-true}
+      AUTH_DEV_USER: ${AUTH_DEV_USER:-dev.admin@example.com|Dev Admin|ADMIN}
+
+      AUTH_SECRET: ${AUTH_SECRET:-demo-only-secret-not-for-real-deployments}
+      AUTH_URL: ${AUTH_URL:-http://localhost:3000}
+      AUTH_MICROSOFT_ENTRA_ID_ID: ${AUTH_MICROSOFT_ENTRA_ID_ID:-}
+      AUTH_MICROSOFT_ENTRA_ID_SECRET: ${AUTH_MICROSOFT_ENTRA_ID_SECRET:-}
+      AUTH_MICROSOFT_ENTRA_ID_ISSUER: ${AUTH_MICROSOFT_ENTRA_ID_ISSUER:-}
+      ADMIN_BOOTSTRAP_EMAILS: ${ADMIN_BOOTSTRAP_EMAILS:-}
+
       UPLOAD_DIR: /app/uploads
       MAX_UPLOAD_MB: ${MAX_UPLOAD_MB:-5}
       STALE_RATING_MONTHS: ${STALE_RATING_MONTHS:-6}
       GAP_MIN_PEOPLE: ${GAP_MIN_PEOPLE:-2}
       LOG_LEVEL: ${LOG_LEVEL:-info}
     ports:
-      - '127.0.0.1:3000:3000'
+      - '${WEB_PORT:-3000}:3000'
     volumes:
       - uploads:/app/uploads
     depends_on:
@@ -58,7 +85,7 @@ services:
       migrate:
         condition: service_completed_successfully
 
-  # TLS termination for the internal VM. Start with: docker compose --profile prod up -d
+  # TLS termination for a real deployment: docker compose --profile prod up -d
   proxy:
     image: caddy:2-alpine
     profiles: ['prod']

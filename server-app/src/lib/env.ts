@@ -97,11 +97,25 @@ export const env = {
   },
 
   /**
-   * Local development shortcut: signs in as a fixed user so the app is usable
-   * without an Entra tenant. Ignored entirely in production.
+   * Opt-in switch that allows AUTH_DEV_USER to work in a production build.
+   * The container image is built with NODE_ENV=production, so without this the
+   * demo compose stack would be unusable without a real Entra tenant.
+   * Must never be set on a real deployment.
+   */
+  get isDemoMode(): boolean {
+    return (raw('DEMO_MODE') ?? '').toLowerCase() === 'true';
+  },
+
+  /**
+   * Signs in as a fixed user so the app is usable without an Entra tenant.
+   *
+   * Honoured outside production automatically, and inside production only when
+   * DEMO_MODE is explicitly set. Defaulting to off in production is the safe
+   * direction: forgetting to set a flag locks you out, forgetting to unset one
+   * would let anyone in.
    */
   get devUser(): DevUser | null {
-    if (this.isProduction) return null;
+    if (this.isProduction && !this.isDemoMode) return null;
     const value = raw('AUTH_DEV_USER');
     return value ? parseDevUser(value) : null;
   },

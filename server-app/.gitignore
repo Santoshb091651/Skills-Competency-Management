@@ -9,6 +9,10 @@ next-env.d.ts
 .env.local
 .env*.local
 
+# Corporate CA certificates are supplied per developer, not committed.
+docker/ca/*.crt
+docker/ca/*.pem
+
 # Generated Prisma client
 src/generated/
 

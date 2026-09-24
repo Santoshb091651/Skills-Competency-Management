@@ -1,0 +1,2 @@
+# Keeps this directory present in git and in the Docker build context, so the
+# COPY in the Dockerfile always has something to copy even with no certificates.

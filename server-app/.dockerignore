@@ -1,0 +1,33 @@
+# Dependencies are installed inside the image. Copying the host's node_modules
+# would also drag in Windows-native binaries that cannot run on Alpine.
+node_modules
+
+# Build output and generated code, both recreated during the image build.
+.next
+out
+src/generated
+
+# Never bake secrets into an image.
+.env
+.env.local
+.env.*.local
+
+# Local state
+uploads
+*.log
+
+# Version control and editor noise
+.git
+.gitignore
+.vscode
+.idea
+.DS_Store
+Thumbs.db
+
+# Sibling deliverables that are not part of this application
+powerbi
+powerplatform
+presentation
+
+# Docs are not needed at runtime
+*.md

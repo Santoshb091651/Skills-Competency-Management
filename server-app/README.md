@@ -1,114 +1,166 @@
-# Server-based application — parked prototype
+# Server-based application
 
-The original custom web application for the Skills & Competency Dashboard,
-before the solution was constrained to Power BI, Power Apps and Dataverse.
+The custom web application for the Skills & Competency Dashboard — Next.js,
+Prisma and PostgreSQL.
 
-**This is kept for reference. It is not the delivery path**, and it is not
-finished. See [`../powerplatform`](../powerplatform/README.md) and
-[`../powerbi`](../powerbi/README.md) for the solution being built.
-
----
-
-## Status: incomplete scaffold
-
-Be clear on what this is before spending time on it.
-
-| Layer | State |
-|---|---|
-| Database schema | **Complete.** Prisma schema plus two migrations, applied and verified against PostgreSQL 16. |
-| Auth and authorisation | **Complete.** Entra ID config, role mapping, user provisioning, reporting-line scope resolution. |
-| Supporting libraries | **Complete.** Typed environment access, Prisma client, structured logger, error contract. |
-| HTTP routes | **Not started.** |
-| User interface | **Not started.** There is no `src/app` directory. |
-| Services layer | **Not started.** |
-| Tests | **Not started.** |
-
-Because Next.js requires `src/app`, **`npm run build` and `npm run dev` will
-fail** on a fresh clone. That is expected. Work stopped when the platform
-decision changed, roughly at the end of what the architecture called Phase 1.
+It predates the decision to build on Power Apps, Power BI and Dataverse, so
+**this is not the delivery path**. See [`../powerplatform`](../powerplatform/README.md)
+and [`../powerbi`](../powerbi/README.md) for that. It is kept because it runs,
+and because the data model in it is the clearest statement of how the
+skills history actually works.
 
 ---
 
-## What is actually worth reading here
+## Run it
 
-Two things survived the platform change as useful thinking, and both are worth
-comparing against the Dataverse implementation.
+One command, no configuration:
 
-### `prisma/schema.prisma`
-
-The bi-temporal model in relational form. `SkillAssessment` separates
-`effectiveDate` (when a rating became true, backdatable) from `createdAt` and
-`supersededAt` (when the row was written and when it stopped being current).
-Corrections insert a new row linked by `supersedesId` rather than overwriting.
-This is the same model the Dataverse tables use, expressed in a language that
-makes the constraints explicit.
-
-### `prisma/migrations/20260921181724_hardening/migration.sql`
-
-The rules a relational database can enforce that Dataverse cannot, which makes
-it a useful checklist of what the Power Platform build has to enforce by other
-means:
-
-- rating bounds `0..5` as CHECK constraints on both tables
-- `effective_date <= CURRENT_DATE`, so a rating can be backdated but never
-  future-dated
-- a correction or void must carry a reason of at least 10 characters
-- emails stored lower-cased, enforced rather than assumed
-- a partial index on live assessments only, which is the access path the
-  as-of trend query depends on
-- **`audit_event` made append-only with triggers** rather than with `REVOKE`,
-  because the application may connect as the table owner and owner privileges
-  cannot be revoked
-
-That last one is the interesting comparison. The Power Platform build achieves
-the same guarantee differently and arguably more strongly, by removing the
-Delete privilege from every security role including Admin.
-
-### `src/lib/auth/scope.ts`
-
-The reporting-line closure as a recursive CTE. Dataverse replaces this entirely
-with Manager hierarchy security — a native feature instead of a query — which is
-one of the clearer wins from the platform move.
-
----
-
-## Running it, if it is ever resumed
-
-```powershell
-npm install
-docker compose up -d db          # PostgreSQL 16 on localhost:5432
-copy .env.example .env           # then set AUTH_SECRET at minimum
-npm run db:migrate
-npm run db:seed                  # note: prisma/seed.ts was never written
+```bash
+docker compose up --build -d
 ```
 
-`npm run dev` will fail until `src/app` exists. The first thing to build would
-be `src/app/layout.tsx` and a page, then the service layer the architecture
-describes.
+Then open **http://localhost:3000**.
 
-Local development uses PostgreSQL in Docker rather than SQLite, because Prisma
-pins the database provider in the schema and the trend query relies on
-`DISTINCT ON` and `generate_series`, neither of which SQLite has.
+The first build takes a few minutes. After that the stack starts in seconds.
+It creates the database, applies both migrations, loads demo data — 12
+employees, 50 skills and about 180 ratings with two years of history — and
+serves the app.
 
-### Stack
+To stop it:
 
-Next.js 16, React 19, TypeScript 7, Prisma 7 with the `@prisma/adapter-pg`
-driver adapter, Auth.js v5 (beta) with the Microsoft Entra ID provider,
-PostgreSQL 16, Tailwind 4.
+```bash
+docker compose down          # keep the data
+docker compose down -v       # also delete the database volume
+```
 
-Two version notes for anyone picking this up: Prisma 7 moved the connection URL
-out of `schema.prisma` into `prisma7.config.ts` and now requires a driver
-adapter, and `prisma` was pinned to 7.10.0 because its `latest` tag pointed at
-an 8.0 release candidate.
+### Behind a corporate proxy
+
+If the build fails with `UNABLE_TO_GET_ISSUER_CERT_LOCALLY`, your network
+inspects TLS and the container does not trust the intercepting CA. Copy your
+organisation's root certificate into `docker/ca/` and rebuild — see
+[`docker/ca/README.md`](docker/ca/README.md). This was needed on the machine
+the app was developed on, so the mechanism is tested.
 
 ---
 
-## Known issues
+## What you will see
 
-- `npm audit` reports findings in the Prisma CLI's transitive dependencies
-  (`deepmerge-ts`, `mysql2`) and in ExcelJS's `uuid@8`. None are reachable from
-  application code, and no safe upgrade existed. The Dockerfile keeps the
-  Prisma CLI in a separate `migrator` stage so it stays out of the runtime image.
-- `prisma/seed.ts` is referenced by the `db:seed` script but was never written.
-  The equivalent seed data now lives in
-  [`../powerplatform/data`](../powerplatform/data) as CSV.
+| Page | Contents |
+|---|---|
+| `/` | Headline counts, the most widely held skills, and recent rating activity. |
+| `/employees` | Directory with search and a department filter. Filters live in the URL, so a filtered view is shareable. |
+| `/employees/{id}` | Profile: current skills with ratings, and the **full history** — every rating ever recorded, including entries later corrected or voided. |
+| `/skills` | Catalog by category, the 0–5 rating scale with its written definitions, and coverage per skill. Skills with fewer than two people at level 3+ are flagged. |
+| `/api/health` | Liveness and database connectivity. Used by the container healthcheck. |
+
+The history page is the one worth looking at. The seed deliberately includes
+one **correction** and one **void** so the append-only model is visible rather
+than merely described: the original row is still there, marked superseded or
+struck through, with the reason it was changed.
+
+---
+
+## Developing against it
+
+For hot reload, run the app on the host and only the database in Docker:
+
+```bash
+npm install
+docker compose up -d db
+cp .env.example .env          # Windows: copy .env.example .env
+npm run db:migrate
+npm run db:seed
+npm run dev
+```
+
+| Script | Does |
+|---|---|
+| `npm run dev` | Development server with hot reload |
+| `npm run build` / `npm start` | Production build and serve |
+| `npm run typecheck` | TypeScript with no emit |
+| `npm run db:migrate` | Apply migrations (development) |
+| `npm run db:deploy` | Apply migrations (non-interactive, used by the container) |
+| `npm run db:seed` | Load demo data — idempotent, safe to re-run |
+| `npm run db:studio` | Prisma Studio, a table browser |
+| `npm run db:reset` | Drop, re-migrate and re-seed |
+
+### One trap worth knowing
+
+`.env` holds `DATABASE_URL` pointing at **localhost**, which is right for
+host-side commands but unreachable from inside a container. Docker Compose
+automatically reads that same `.env` for variable substitution, so the compose
+file deliberately reads `COMPOSE_DATABASE_URL` instead and never
+`DATABASE_URL`. Renaming either one to "tidy it up" will break `docker compose up`
+for anyone who has created a `.env`.
+
+---
+
+## Sign-in
+
+The stack runs with `DEMO_MODE=true`, which bypasses single sign-on entirely and
+signs everyone in as a fixed admin. An amber banner says so on every page.
+
+For real authentication, remove `DEMO_MODE` and set the Entra ID variables in
+`.env.example`. Roles come from Entra app roles or security groups, mapped in
+`src/lib/auth/roles.ts`, and a manager's write scope is the transitive closure
+of their reporting line, computed in `src/lib/auth/scope.ts`.
+
+`DEMO_MODE` has to be set explicitly and is ignored outside it: forgetting to
+set a flag locks you out, whereas forgetting to unset one would let anyone in.
+
+---
+
+## Status
+
+Complete: the database schema and migrations, the auth and authorisation
+layer, the read-side UI (dashboard, directory, profile with history, catalog),
+the health endpoint, and the Docker deployment.
+
+Not built: writing ratings through the UI, the Excel import, and the trend
+charts. Data is entered by the seed script. Those three are the next pieces if
+this were ever resumed — and all three exist in the Power Platform build.
+
+---
+
+## Why the schema is worth reading even though the app is parked
+
+`prisma/schema.prisma` and the hardening migration encode rules the Power
+Platform build has to enforce by other means, which makes them a useful
+cross-check.
+
+`SkillAssessment` separates **effective date** — when a rating became true,
+backdatable — from **created at** and **superseded at**, which record when the
+row was written and when it stopped being current. A correction never
+overwrites: it inserts a new row linked by `supersedesId` and marks the
+original superseded. That is why the history page can show both the corrected
+timeline and what the system believed beforehand.
+
+`prisma/migrations/20260921181724_hardening/migration.sql` adds what the schema
+language cannot express: rating bounds of 0–5, `effective_date <= CURRENT_DATE`
+so a rating can be backdated but never future-dated, a minimum-length reason on
+corrections and voids, a partial index covering only live assessments, and an
+**append-only audit table enforced with triggers** rather than `REVOKE` —
+because the application may connect as the table owner, and owner privileges
+cannot be revoked.
+
+The Dataverse build reaches the same guarantee differently, and arguably more
+strongly, by removing the Delete privilege from every security role including
+Admin.
+
+---
+
+## Stack
+
+Next.js 16, React 19, TypeScript 7, Prisma 7 with `@prisma/adapter-pg`,
+Auth.js v5 (beta) with the Microsoft Entra ID provider, PostgreSQL 16,
+Tailwind CSS 4.
+
+Two notes for anyone picking this up. Prisma 7 moved the connection URL out of
+`schema.prisma` into `prisma7.config.ts` and now requires a driver adapter.
+`prisma` is pinned to 7.10.0 because its `latest` tag points at an 8.0 release
+candidate.
+
+`npm audit` reports findings in the Prisma CLI's transitive dependencies and in
+ExcelJS's `uuid@8`. None are reachable from application code and no safe
+upgrade existed; the Dockerfile keeps the Prisma CLI in a separate `migrator`
+stage so it stays out of the long-running image.
