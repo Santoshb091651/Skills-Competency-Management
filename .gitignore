@@ -3,10 +3,23 @@
 # interactively; nothing sensitive belongs in this repository.
 .env
 .env.*
+# ...but the example file documents the configuration and must be tracked.
+!.env.example
 *.pfx
 *.pem
 *.key
 *.p12
+
+# Node / Next.js build output (server-app)
+node_modules/
+.next/
+out/
+next-env.d.ts
+# Prisma generated client
+src/generated/
+server-app/src/generated/
+# Uploaded import files
+uploads/
 
 # Payload dumps from: New-SkillsSchema.ps1 -ValidateOnly -PayloadOutputPath
 *-payloads.json

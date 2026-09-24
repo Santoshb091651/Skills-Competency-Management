@@ -1,0 +1,99 @@
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-skills}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-skills_dev_password}
+      POSTGRES_DB: ${POSTGRES_DB:-skills}
+    ports:
+      # Exposed so `npm run dev` on the host can reach it. Bound to loopback only.
+      - '127.0.0.1:5432:5432'
+    volumes:
+      - db_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U ${POSTGRES_USER:-skills} -d ${POSTGRES_DB:-skills}']
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  # One-shot migration runner. Kept separate from `web` so the Prisma CLI and its
+  # transitive dependencies stay out of the long-running runtime image.
+  migrate:
+    build:
+      context: .
+      target: migrator
+    environment:
+      DATABASE_URL: ${DATABASE_URL}
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: 'no'
+
+  web:
+    build:
+      context: .
+      target: runner
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: ${DATABASE_URL}
+      AUTH_SECRET: ${AUTH_SECRET}
+      AUTH_URL: ${AUTH_URL}
+      AUTH_MICROSOFT_ENTRA_ID_ID: ${AUTH_MICROSOFT_ENTRA_ID_ID}
+      AUTH_MICROSOFT_ENTRA_ID_SECRET: ${AUTH_MICROSOFT_ENTRA_ID_SECRET}
+      AUTH_MICROSOFT_ENTRA_ID_ISSUER: ${AUTH_MICROSOFT_ENTRA_ID_ISSUER}
+      ADMIN_BOOTSTRAP_EMAILS: ${ADMIN_BOOTSTRAP_EMAILS}
+      UPLOAD_DIR: /app/uploads
+      MAX_UPLOAD_MB: ${MAX_UPLOAD_MB:-5}
+      STALE_RATING_MONTHS: ${STALE_RATING_MONTHS:-6}
+      GAP_MIN_PEOPLE: ${GAP_MIN_PEOPLE:-2}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+    ports:
+      - '127.0.0.1:3000:3000'
+    volumes:
+      - uploads:/app/uploads
+    depends_on:
+      db:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+
+  # TLS termination for the internal VM. Start with: docker compose --profile prod up -d
+  proxy:
+    image: caddy:2-alpine
+    profiles: ['prod']
+    restart: unless-stopped
+    ports:
+      - '80:80'
+      - '443:443'
+    volumes:
+      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - web
+
+  # Nightly pg_dump with 30-day rotation (NFR-07).
+  backup:
+    image: postgres:16-alpine
+    profiles: ['prod']
+    restart: unless-stopped
+    environment:
+      PGUSER: ${POSTGRES_USER:-skills}
+      PGPASSWORD: ${POSTGRES_PASSWORD:-skills_dev_password}
+      PGDATABASE: ${POSTGRES_DB:-skills}
+      PGHOST: db
+    volumes:
+      - ./deploy/backup.sh:/usr/local/bin/backup.sh:ro
+      - backups:/backups
+    entrypoint: ['/bin/sh', '-c', 'while true; do sleep 86400; /usr/local/bin/backup.sh; done']
+    depends_on:
+      db:
+        condition: service_healthy
+
+volumes:
+  db_data:
+  uploads:
+  backups:
+  caddy_data:
+  caddy_config:

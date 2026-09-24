@@ -1,0 +1,432 @@
+// Employee Skills & Competency Management Dashboard
+// Data model — see ARCHITECTURE.md section 5 for the rationale behind each table
+// and section 6 for the temporal/audit design that shapes SkillAssessment.
+//
+// Constraints Prisma cannot express (CHECK constraints, partial and functional
+// indexes, audit-table grants) live in prisma/migrations/*_hardening/migration.sql.
+
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+// Prisma 7 takes the connection URL from prisma7.config.ts for migrations, and
+// from the @prisma/adapter-pg driver adapter at runtime (see src/lib/db.ts).
+datasource db {
+  provider = "postgresql"
+}
+
+// ---------------------------------------------------------------------------
+// Enums
+// ---------------------------------------------------------------------------
+
+enum Role {
+  ADMIN
+  MANAGER
+  EMPLOYEE
+}
+
+enum EmploymentStatus {
+  ACTIVE
+  INACTIVE
+}
+
+enum EmployeeSource {
+  EXCEL
+  MANUAL
+}
+
+enum SkillStatus {
+  ACTIVE
+  PENDING
+  DEPRECATED
+}
+
+enum EmployeeSkillStatus {
+  ACTIVE
+  ARCHIVED
+}
+
+/// ACTIVE counts toward the current rating and trends; VOIDED never does but is
+/// still shown in the history. Rows are never deleted (FR-HIS-05).
+enum AssessmentStatus {
+  ACTIVE
+  VOIDED
+}
+
+enum AssessmentSource {
+  MANUAL
+  CORRECTION
+  IMPORT
+}
+
+enum ImportStatus {
+  DRY_RUN
+  COMMITTED
+  FAILED
+}
+
+enum ImportRowOutcome {
+  CREATED
+  UPDATED
+  UNCHANGED
+  ERROR
+  SKIPPED
+}
+
+enum AuditAction {
+  EMPLOYEE_CREATED
+  EMPLOYEE_UPDATED
+  SKILL_ASSIGNED
+  SKILL_ARCHIVED
+  ASSESSMENT_CREATED
+  ASSESSMENT_CORRECTED
+  ASSESSMENT_VOIDED
+  CATALOG_SKILL_CREATED
+  CATALOG_SKILL_UPDATED
+  CATALOG_SKILL_DEPRECATED
+  CATALOG_SKILL_MERGED
+  CATEGORY_CHANGED
+  RATING_SCALE_CHANGED
+  ROLE_CHANGED
+  IMPORT_COMMITTED
+}
+
+// ---------------------------------------------------------------------------
+// People
+// ---------------------------------------------------------------------------
+
+/// Employee master data. Populated by the Excel import (FR-IMP-01); this app is
+/// not the HR system of record.
+model Employee {
+  id     String @id @default(uuid()) @db.Uuid
+  /// Primary upsert key for the Excel import.
+  employeeCode String @unique @map("employee_code")
+  fullName     String @map("full_name")
+  /// Always stored lower-cased; the app normalises on write so the unique index
+  /// is effectively case-insensitive (see ARCHITECTURE.md 5.1).
+  email        String @unique
+
+  department  String?
+  designation String?
+  location    String?
+
+  /// Reporting line, resolved from the `manager_email` column after all rows are
+  /// inserted (FR-IMP-10). Drives a manager's write scope (FR-SEC-04).
+  managerId String?    @map("manager_id") @db.Uuid
+  manager   Employee?  @relation("ReportsTo", fields: [managerId], references: [id], onDelete: SetNull)
+  reports   Employee[] @relation("ReportsTo")
+
+  dateOfJoining    DateTime?        @map("date_of_joining") @db.Date
+  employmentStatus EmploymentStatus @default(ACTIVE) @map("employment_status")
+  source           EmployeeSource   @default(EXCEL)
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  skills     EmployeeSkill[]
+  appUser    AppUser?
+  importRows ImportRow[]
+
+  @@index([managerId])
+  @@index([department])
+  @@index([employmentStatus])
+  @@map("employee")
+}
+
+/// A person who can sign in. Created on first Entra ID sign-in and linked to an
+/// Employee by email where one matches (FR-SEC-06).
+model AppUser {
+  id            String  @id @default(uuid()) @db.Uuid
+  /// Entra ID `oid` claim. Null only for locally seeded bootstrap admins.
+  entraObjectId String? @unique @map("entra_object_id")
+  email         String  @unique
+  displayName   String  @map("display_name")
+
+  /// Resolved at sign-in from Entra app roles or groups; an Admin may override
+  /// it in-app (FR-SEC-02, FR-SEC-04).
+  role Role @default(EMPLOYEE)
+  /// Admin-granted escape hatch for managers whose team sits outside their
+  /// formal reporting line (FR-SEC-04).
+  orgWideWrite Boolean @default(false) @map("org_wide_write")
+
+  employeeId String?   @unique @map("employee_id") @db.Uuid
+  employee   Employee? @relation(fields: [employeeId], references: [id], onDelete: SetNull)
+
+  isActive    Boolean   @default(true) @map("is_active")
+  lastLoginAt DateTime? @map("last_login_at") @db.Timestamptz(3)
+  createdAt   DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  assessments   SkillAssessment[] @relation("AssessedBy")
+  auditEvents   AuditEvent[]
+  importBatches ImportBatch[]
+  createdSkills Skill[]
+
+  @@index([role])
+  @@map("app_user")
+}
+
+// ---------------------------------------------------------------------------
+// Skill catalog
+// ---------------------------------------------------------------------------
+
+model SkillCategory {
+  id           String  @id @default(uuid()) @db.Uuid
+  name         String  @unique
+  description  String?
+  displayOrder Int     @default(0) @map("display_order")
+  isActive     Boolean @default(true) @map("is_active")
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  skills Skill[]
+  /// Optional per-category overrides of the 0-5 scale wording (FR-RAT-05).
+  ratingLevels RatingLevel[]
+
+  @@map("skill_category")
+}
+
+model Skill {
+  id   String @id @default(uuid()) @db.Uuid
+  name String
+  /// lower(trim(name)) maintained by the app; enforces case-insensitive
+  /// uniqueness so `playwright` cannot shadow `Playwright` (FR-CAT-05).
+  normalizedName String @unique @map("normalized_name")
+
+  categoryId String        @map("category_id") @db.Uuid
+  category   SkillCategory @relation(fields: [categoryId], references: [id])
+
+  description String?
+  /// Searchable synonyms, e.g. ["JS"] on JavaScript (FR-CAT-06).
+  aliases String[] @default([])
+
+  status SkillStatus @default(ACTIVE)
+
+  /// Set when this skill has been merged into another (FR-CAT-08). The row is
+  /// kept so historical references stay resolvable.
+  mergedIntoSkillId String? @map("merged_into_skill_id") @db.Uuid
+  mergedInto        Skill?  @relation("SkillMerge", fields: [mergedIntoSkillId], references: [id])
+  mergedFrom        Skill[] @relation("SkillMerge")
+
+  createdByUserId String?  @map("created_by_user_id") @db.Uuid
+  createdBy       AppUser? @relation(fields: [createdByUserId], references: [id], onDelete: SetNull)
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  employeeSkills EmployeeSkill[]
+
+  @@index([categoryId])
+  @@index([status])
+  @@map("skill")
+}
+
+/// One row per rating value. `categoryId = null` is the global scale; a row with
+/// a category overrides the global wording for that category (FR-RAT-02/05).
+model RatingLevel {
+  id    String @id @default(uuid()) @db.Uuid
+  value Int
+
+  categoryId String?        @map("category_id") @db.Uuid
+  category   SkillCategory? @relation(fields: [categoryId], references: [id], onDelete: Cascade)
+
+  label       String
+  description String
+
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  // Postgres treats NULLs as distinct, so this does not stop two global rows
+  // sharing a value. A partial unique index in the hardening migration does.
+  @@unique([categoryId, value])
+  @@map("rating_level")
+}
+
+// ---------------------------------------------------------------------------
+// Employee skills and their assessment timeline
+// ---------------------------------------------------------------------------
+
+/// The link between an employee and a skill. `currentRating` and the derived
+/// dates are a cache, always rebuilt from the assessment timeline inside the
+/// same transaction as any write (ARCHITECTURE.md 5.2).
+model EmployeeSkill {
+  id String @id @default(uuid()) @db.Uuid
+
+  employeeId String   @map("employee_id") @db.Uuid
+  employee   Employee @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+
+  skillId String @map("skill_id") @db.Uuid
+  skill   Skill  @relation(fields: [skillId], references: [id])
+
+  /// Derived: rating of the latest live assessment (FR-SKL-08). 0..5.
+  currentRating       Int              @map("current_rating")
+  currentAssessmentId String?          @unique @map("current_assessment_id") @db.Uuid
+  currentAssessment   SkillAssessment? @relation("CurrentAssessment", fields: [currentAssessmentId], references: [id], onDelete: SetNull)
+
+  /// Derived: effective date of the earliest live assessment (FR-SKL-09).
+  firstAcquiredOn DateTime @map("first_acquired_on") @db.Date
+  /// Derived: effective date of the latest live assessment.
+  lastAssessedOn DateTime @map("last_assessed_on") @db.Date
+
+  targetRating Int?      @map("target_rating")
+  targetDate   DateTime? @map("target_date") @db.Date
+
+  status EmployeeSkillStatus @default(ACTIVE)
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  assessments SkillAssessment[] @relation("Timeline")
+
+  @@unique([employeeId, skillId])
+  @@index([skillId])
+  @@index([status])
+  @@map("employee_skill")
+}
+
+/// One observation of a rating at a point in time. Append-only: the only field
+/// ever updated after insert is `supersededAt`. Corrections insert a new row
+/// pointing at what it replaced (ARCHITECTURE.md 6.2).
+model SkillAssessment {
+  id String @id @default(uuid()) @db.Uuid
+
+  employeeSkillId String        @map("employee_skill_id") @db.Uuid
+  employeeSkill   EmployeeSkill @relation("Timeline", fields: [employeeSkillId], references: [id], onDelete: Cascade)
+
+  /// 0..5, bounded by a CHECK constraint in the hardening migration.
+  rating Int
+
+  /// Valid time: the date this rating became true. Backdatable, never future
+  /// (FR-SKL-05). All trend maths keys off this column.
+  effectiveDate DateTime @map("effective_date") @db.Date
+
+  /// Free-text justification for this specific rating (FR-RAT-06).
+  note String?
+
+  status AssessmentStatus @default(ACTIVE)
+  source AssessmentSource @default(MANUAL)
+
+  assessedByUserId String?  @map("assessed_by_user_id") @db.Uuid
+  assessedBy       AppUser? @relation("AssessedBy", fields: [assessedByUserId], references: [id], onDelete: SetNull)
+
+  /// The row this one replaces. Unique, so a given assessment can be superseded
+  /// at most once, forming a linear version chain.
+  supersedesId String?          @unique @map("supersedes_id") @db.Uuid
+  supersedes   SkillAssessment? @relation("Supersede", fields: [supersedesId], references: [id])
+  supersededBy SkillAssessment? @relation("Supersede")
+
+  /// Transaction time: when this row stopped being the current version. Live
+  /// rows (used by trends and current state) have this null and status ACTIVE.
+  supersededAt DateTime? @map("superseded_at") @db.Timestamptz(3)
+
+  /// Mandatory on a correction or void (FR-HIS-03).
+  changeReason String? @map("change_reason")
+
+  /// Transaction time: when this row was written. Immutable.
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  currentFor EmployeeSkill? @relation("CurrentAssessment")
+
+  @@index([employeeSkillId, effectiveDate(sort: Desc), createdAt(sort: Desc)])
+  @@index([effectiveDate])
+  @@map("skill_assessment")
+}
+
+// ---------------------------------------------------------------------------
+// Audit
+// ---------------------------------------------------------------------------
+
+/// Append-only log of every change in the system, written inside the same
+/// transaction as the change it describes (FR-AUD-01/03). The hardening
+/// migration revokes UPDATE and DELETE on this table from the app role.
+model AuditEvent {
+  id         Int      @id @default(autoincrement())
+  occurredAt DateTime @default(now()) @map("occurred_at") @db.Timestamptz(3)
+
+  actorUserId String?  @map("actor_user_id") @db.Uuid
+  actor       AppUser? @relation(fields: [actorUserId], references: [id], onDelete: SetNull)
+  actorRole   Role?    @map("actor_role")
+
+  action AuditAction
+
+  entityType String  @map("entity_type")
+  /// Kept as text because audited entities do not all share a key type.
+  entityId String? @map("entity_id")
+
+  /// Denormalised so the per-employee and per-skill trails are single-index reads.
+  employeeId String? @map("employee_id") @db.Uuid
+  skillId    String? @map("skill_id") @db.Uuid
+
+  beforeState Json? @map("before_state")
+  afterState  Json? @map("after_state")
+
+  reason    String?
+  requestId String? @map("request_id")
+  ipAddress String? @map("ip_address")
+
+  @@index([employeeId, occurredAt(sort: Desc)])
+  @@index([entityType, entityId, occurredAt(sort: Desc)])
+  @@index([actorUserId, occurredAt(sort: Desc)])
+  @@index([action, occurredAt(sort: Desc)])
+  @@index([skillId, occurredAt(sort: Desc)])
+  @@map("audit_event")
+}
+
+// ---------------------------------------------------------------------------
+// Excel import
+// ---------------------------------------------------------------------------
+
+/// One upload. Created by the dry run and only flipped to COMMITTED once the
+/// user confirms the preview (FR-IMP-04/05/09).
+model ImportBatch {
+  id         String  @id @default(uuid()) @db.Uuid
+  filename   String
+  storedPath String? @map("stored_path")
+
+  uploadedByUserId String?  @map("uploaded_by_user_id") @db.Uuid
+  uploadedBy       AppUser? @relation(fields: [uploadedByUserId], references: [id], onDelete: SetNull)
+
+  status ImportStatus @default(DRY_RUN)
+  /// Opt-in: flag employees absent from the file as inactive (FR-IMP-08).
+  markMissingInactive Boolean @default(false) @map("mark_missing_inactive")
+
+  totalRows      Int @default(0) @map("total_rows")
+  createdCount   Int @default(0) @map("created_count")
+  updatedCount   Int @default(0) @map("updated_count")
+  unchangedCount Int @default(0) @map("unchanged_count")
+  errorCount     Int @default(0) @map("error_count")
+
+  errorSummary String? @map("error_summary")
+
+  createdAt   DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  committedAt DateTime? @map("committed_at") @db.Timestamptz(3)
+
+  rows ImportRow[]
+
+  @@index([createdAt(sort: Desc)])
+  @@map("import_batch")
+}
+
+/// Per-row outcome, kept so an import can be explained long after the fact.
+model ImportRow {
+  id String @id @default(uuid()) @db.Uuid
+
+  batchId String      @map("batch_id") @db.Uuid
+  batch   ImportBatch @relation(fields: [batchId], references: [id], onDelete: Cascade)
+
+  /// 1-based spreadsheet row number, so errors point at the real row.
+  rowNumber Int  @map("row_number")
+  rawValues Json @map("raw_values")
+
+  outcome      ImportRowOutcome
+  errorMessage String?          @map("error_message")
+  /// Field-level diff shown in the preview for UPDATED rows.
+  changes Json? @map("changes")
+
+  employeeId String?   @map("employee_id") @db.Uuid
+  employee   Employee? @relation(fields: [employeeId], references: [id], onDelete: SetNull)
+
+  @@unique([batchId, rowNumber])
+  @@index([batchId, outcome])
+  @@map("import_row")
+}

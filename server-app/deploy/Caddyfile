@@ -1,0 +1,18 @@
+# Internal VM TLS termination. Replace the site address with the real hostname.
+# For an internal CA certificate, mount it and use the `tls` directive below.
+
+skills.internal.example.com {
+	encode gzip
+
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Content-Type-Options "nosniff"
+		Referrer-Policy "strict-origin-when-cross-origin"
+		-Server
+	}
+
+	reverse_proxy web:3000
+
+	# Internal certificate instead of ACME:
+	# tls /etc/caddy/certs/skills.crt /etc/caddy/certs/skills.key
+}
