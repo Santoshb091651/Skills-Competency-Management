@@ -1,0 +1,652 @@
+{
+  "$comment": [
+    "Declarative Dataverse schema for the Employee Skills & Competency Management Dashboard.",
+    "Applied by scripts/New-SkillsSchema.ps1 against the Dataverse Web API. Idempotent:",
+    "existing components are reported and skipped, so the script is safe to re-run.",
+    "Traceability: every table maps to ARCHITECTURE.md section 4.",
+    "",
+    "Choice values use the publisher option-value prefix range (42100 -> 421000000+)",
+    "so they never collide with another publisher's values. The label, not the number,",
+    "is what appears in the app and in Power BI."
+  ],
+
+  "publisher": {
+    "uniqueName": "skillsdashboard",
+    "friendlyName": "Skills Dashboard",
+    "description": "Publisher for the Employee Skills & Competency Management Dashboard.",
+    "prefix": "skl",
+    "optionValuePrefix": 42100
+  },
+
+  "solution": {
+    "uniqueName": "SkillsCompetency",
+    "friendlyName": "Employee Skills & Competency",
+    "description": "Skills, ratings, progression and audit history.",
+    "version": "1.0.0.0"
+  },
+
+  "tables": [
+    {
+      "schemaName": "skl_Employee",
+      "logicalName": "skl_employee",
+      "displayName": "Employee",
+      "pluralName": "Employees",
+      "description": "Employee master data, loaded from Excel. Not the HR system of record (FR-IMP-01).",
+      "ownershipType": "UserOwned",
+      "isAuditEnabled": true,
+      "primaryAttribute": {
+        "schemaName": "skl_FullName",
+        "displayName": "Full name",
+        "maxLength": 200,
+        "description": "Employee display name."
+      },
+      "columns": [
+        {
+          "schemaName": "skl_EmployeeCode",
+          "displayName": "Employee code",
+          "type": "String",
+          "maxLength": 50,
+          "required": "ApplicationRequired",
+          "description": "Primary upsert key for the Excel import (FR-IMP-06)."
+        },
+        {
+          "schemaName": "skl_Email",
+          "displayName": "Email",
+          "type": "String",
+          "format": "Email",
+          "maxLength": 150,
+          "required": "ApplicationRequired",
+          "description": "Work email, stored lower-cased. Secondary upsert key and the link to the signed-in user."
+        },
+        { "schemaName": "skl_Department", "displayName": "Department", "type": "String", "maxLength": 100 },
+        { "schemaName": "skl_Designation", "displayName": "Designation", "type": "String", "maxLength": 100 },
+        { "schemaName": "skl_Location", "displayName": "Location", "type": "String", "maxLength": 100 },
+        {
+          "schemaName": "skl_DateOfJoining",
+          "displayName": "Date of joining",
+          "type": "DateTime",
+          "dateOnly": true
+        },
+        {
+          "schemaName": "skl_EmploymentStatus",
+          "displayName": "Employment status",
+          "type": "Choice",
+          "defaultValue": 421000000,
+          "options": [
+            { "value": 421000000, "label": "Active" },
+            { "value": 421000001, "label": "Inactive" }
+          ]
+        },
+        {
+          "schemaName": "skl_Source",
+          "displayName": "Source",
+          "type": "Choice",
+          "defaultValue": 421000000,
+          "description": "Where the record came from. Lets a future HRIS feed coexist with Excel.",
+          "options": [
+            { "value": 421000000, "label": "Excel" },
+            { "value": 421000001, "label": "Manual" }
+          ]
+        }
+      ],
+      "alternateKeys": [
+        {
+          "schemaName": "skl_EmployeeCodeKey",
+          "displayName": "Employee code",
+          "attributes": ["skl_employeecode"]
+        },
+        {
+          "schemaName": "skl_EmployeeEmailKey",
+          "displayName": "Employee email",
+          "attributes": ["skl_email"]
+        }
+      ]
+    },
+
+    {
+      "schemaName": "skl_SkillCategory",
+      "logicalName": "skl_skillcategory",
+      "displayName": "Skill Category",
+      "pluralName": "Skill Categories",
+      "description": "Grouping of related skills, e.g. Test Automation (FR-CAT-01).",
+      "ownershipType": "OrganizationOwned",
+      "isAuditEnabled": true,
+      "primaryAttribute": {
+        "schemaName": "skl_Name",
+        "displayName": "Name",
+        "maxLength": 100,
+        "description": "Category name."
+      },
+      "columns": [
+        { "schemaName": "skl_Description", "displayName": "Description", "type": "Memo", "maxLength": 2000 },
+        {
+          "schemaName": "skl_DisplayOrder",
+          "displayName": "Display order",
+          "type": "Integer",
+          "minValue": 0,
+          "maxValue": 1000,
+          "defaultValue": 0
+        },
+        {
+          "schemaName": "skl_IsActive",
+          "displayName": "Is active",
+          "type": "Boolean",
+          "trueLabel": "Yes",
+          "falseLabel": "No",
+          "defaultValue": true
+        }
+      ],
+      "alternateKeys": [
+        { "schemaName": "skl_SkillCategoryNameKey", "displayName": "Category name", "attributes": ["skl_name"] }
+      ]
+    },
+
+    {
+      "schemaName": "skl_Skill",
+      "logicalName": "skl_skill",
+      "displayName": "Skill",
+      "pluralName": "Skills",
+      "description": "A named competency in the catalog, e.g. Playwright, Java, C (FR-CAT-04).",
+      "ownershipType": "OrganizationOwned",
+      "isAuditEnabled": true,
+      "primaryAttribute": {
+        "schemaName": "skl_Name",
+        "displayName": "Name",
+        "maxLength": 100,
+        "description": "Skill name as displayed."
+      },
+      "columns": [
+        {
+          "schemaName": "skl_NormalizedName",
+          "displayName": "Normalized name",
+          "type": "String",
+          "maxLength": 100,
+          "required": "ApplicationRequired",
+          "description": "lower(trim(name)). The alternate key on this column is what makes skill names case-insensitively unique (FR-CAT-05, AC-11)."
+        },
+        { "schemaName": "skl_Description", "displayName": "Description", "type": "Memo", "maxLength": 2000 },
+        {
+          "schemaName": "skl_Aliases",
+          "displayName": "Aliases",
+          "type": "String",
+          "maxLength": 300,
+          "description": "Semicolon-separated synonyms, e.g. JS on JavaScript (FR-CAT-06)."
+        },
+        {
+          "schemaName": "skl_Status",
+          "displayName": "Status",
+          "type": "Choice",
+          "defaultValue": 421000000,
+          "options": [
+            { "value": 421000000, "label": "Active" },
+            { "value": 421000001, "label": "Pending approval" },
+            { "value": 421000002, "label": "Deprecated" }
+          ]
+        }
+      ],
+      "alternateKeys": [
+        {
+          "schemaName": "skl_SkillNormalizedNameKey",
+          "displayName": "Normalized skill name",
+          "attributes": ["skl_normalizedname"]
+        }
+      ]
+    },
+
+    {
+      "schemaName": "skl_RatingLevel",
+      "logicalName": "skl_ratinglevel",
+      "displayName": "Rating Level",
+      "pluralName": "Rating Levels",
+      "description": "One row per rating value 0-5. Ratings are a lookup to this table, which is what makes the 0-5 bound unbreakable on every path (AD-4, AC-12).",
+      "ownershipType": "OrganizationOwned",
+      "isAuditEnabled": true,
+      "primaryAttribute": {
+        "schemaName": "skl_Name",
+        "displayName": "Name",
+        "maxLength": 100,
+        "description": "Display form, e.g. '3 - Practitioner'."
+      },
+      "columns": [
+        {
+          "schemaName": "skl_Value",
+          "displayName": "Value",
+          "type": "Integer",
+          "minValue": 0,
+          "maxValue": 5,
+          "required": "ApplicationRequired",
+          "description": "0 lowest, 5 highest (FR-RAT-01)."
+        },
+        {
+          "schemaName": "skl_Label",
+          "displayName": "Label",
+          "type": "String",
+          "maxLength": 50,
+          "required": "ApplicationRequired",
+          "description": "Short name of the level, e.g. Practitioner."
+        },
+        {
+          "schemaName": "skl_Description",
+          "displayName": "Description",
+          "type": "Memo",
+          "maxLength": 1000,
+          "required": "ApplicationRequired",
+          "description": "What the level means. Shown next to the rating selector (FR-RAT-02)."
+        },
+        {
+          "schemaName": "skl_IsGlobal",
+          "displayName": "Is global",
+          "type": "Boolean",
+          "trueLabel": "Yes",
+          "falseLabel": "No",
+          "defaultValue": true,
+          "description": "True for the default scale. False rows override the wording for one category (FR-RAT-05)."
+        }
+      ],
+      "alternateKeys": []
+    },
+
+    {
+      "schemaName": "skl_EmployeeSkill",
+      "logicalName": "skl_employeeskill",
+      "displayName": "Employee Skill",
+      "pluralName": "Employee Skills",
+      "description": "One row per employee per skill, holding the current state. The derived columns are a cache rebuilt from the assessment timeline (ARCHITECTURE.md 4.2).",
+      "ownershipType": "UserOwned",
+      "isAuditEnabled": true,
+      "primaryAttribute": {
+        "schemaName": "skl_Name",
+        "displayName": "Name",
+        "maxLength": 300,
+        "description": "Composite display, e.g. 'Jane Doe - Playwright'."
+      },
+      "columns": [
+        {
+          "schemaName": "skl_UniqueKey",
+          "displayName": "Unique key",
+          "type": "String",
+          "maxLength": 300,
+          "required": "ApplicationRequired",
+          "description": "employeecode|normalizedskillname. The alternate key on this column enforces one row per employee per skill (NFR-06)."
+        },
+        {
+          "schemaName": "skl_CurrentRating",
+          "displayName": "Current rating",
+          "type": "Integer",
+          "minValue": 0,
+          "maxValue": 5,
+          "description": "Derived: rating of the latest live assessment (FR-SKL-08)."
+        },
+        {
+          "schemaName": "skl_FirstAcquiredOn",
+          "displayName": "First acquired on",
+          "type": "DateTime",
+          "dateOnly": true,
+          "description": "Derived: effective date of the earliest live assessment (FR-SKL-09)."
+        },
+        {
+          "schemaName": "skl_LastAssessedOn",
+          "displayName": "Last assessed on",
+          "type": "DateTime",
+          "dateOnly": true,
+          "description": "Derived: effective date of the latest live assessment."
+        },
+        {
+          "schemaName": "skl_TargetRating",
+          "displayName": "Target rating",
+          "type": "Integer",
+          "minValue": 0,
+          "maxValue": 5,
+          "description": "Optional development goal (FR-SKL-11)."
+        },
+        { "schemaName": "skl_TargetDate", "displayName": "Target date", "type": "DateTime", "dateOnly": true },
+        {
+          "schemaName": "skl_Status",
+          "displayName": "Status",
+          "type": "Choice",
+          "defaultValue": 421000000,
+          "options": [
+            { "value": 421000000, "label": "Active" },
+            { "value": 421000001, "label": "Archived" }
+          ]
+        }
+      ],
+      "alternateKeys": [
+        {
+          "schemaName": "skl_EmployeeSkillUniqueKey",
+          "displayName": "Employee and skill",
+          "attributes": ["skl_uniquekey"]
+        }
+      ]
+    },
+
+    {
+      "schemaName": "skl_SkillAssessment",
+      "logicalName": "skl_skillassessment",
+      "displayName": "Skill Assessment",
+      "pluralName": "Skill Assessments",
+      "description": "One observation of a rating at a point in time. Append-only: the only field ever updated after insert is Superseded on. Corrections insert a new row (ARCHITECTURE.md 5.2).",
+      "ownershipType": "UserOwned",
+      "isAuditEnabled": true,
+      "primaryAttribute": {
+        "schemaName": "skl_Name",
+        "displayName": "Name",
+        "maxLength": 300,
+        "description": "Composite display, e.g. 'Playwright - 3 - 15 Mar 2026'."
+      },
+      "columns": [
+        {
+          "schemaName": "skl_Rating",
+          "displayName": "Rating",
+          "type": "Integer",
+          "minValue": 0,
+          "maxValue": 5,
+          "required": "ApplicationRequired",
+          "description": "Copied from the chosen Rating Level. Denormalised so Power BI can aggregate without a join."
+        },
+        {
+          "schemaName": "skl_EffectiveDate",
+          "displayName": "Effective date",
+          "type": "DateTime",
+          "dateOnly": true,
+          "required": "ApplicationRequired",
+          "description": "Business time: the date this rating became true. Backdatable, never future. Every trend keys off this column (FR-TRD-08)."
+        },
+        {
+          "schemaName": "skl_Note",
+          "displayName": "Note",
+          "type": "Memo",
+          "maxLength": 4000,
+          "description": "Free-text justification for this specific rating (FR-RAT-06). Protected by a column security profile."
+        },
+        {
+          "schemaName": "skl_AssessmentStatus",
+          "displayName": "Assessment status",
+          "type": "Choice",
+          "defaultValue": 421000000,
+          "description": "Voided rows are excluded from the current rating and all trends but never deleted (FR-HIS-04).",
+          "options": [
+            { "value": 421000000, "label": "Active" },
+            { "value": 421000001, "label": "Voided" }
+          ]
+        },
+        {
+          "schemaName": "skl_Source",
+          "displayName": "Source",
+          "type": "Choice",
+          "defaultValue": 421000000,
+          "options": [
+            { "value": 421000000, "label": "Manual" },
+            { "value": 421000001, "label": "Correction" },
+            { "value": 421000002, "label": "Import" }
+          ]
+        },
+        {
+          "schemaName": "skl_SupersededOn",
+          "displayName": "Superseded on",
+          "type": "DateTime",
+          "dateOnly": false,
+          "description": "System time: when this row stopped being the current version. Blank means live. The only column ever updated after insert."
+        },
+        {
+          "schemaName": "skl_ChangeReason",
+          "displayName": "Change reason",
+          "type": "Memo",
+          "maxLength": 1000,
+          "description": "Mandatory on a correction or a void, minimum 10 characters, enforced by a business rule (FR-HIS-03)."
+        }
+      ],
+      "alternateKeys": []
+    },
+
+    {
+      "schemaName": "skl_ImportBatch",
+      "logicalName": "skl_importbatch",
+      "displayName": "Import Batch",
+      "pluralName": "Import Batches",
+      "description": "One employee-data upload. Stays Staged until an admin promotes it (FR-IMP-04/05/09).",
+      "ownershipType": "UserOwned",
+      "isAuditEnabled": true,
+      "primaryAttribute": {
+        "schemaName": "skl_Name",
+        "displayName": "Name",
+        "maxLength": 200,
+        "description": "File name and timestamp."
+      },
+      "columns": [
+        {
+          "schemaName": "skl_Status",
+          "displayName": "Status",
+          "type": "Choice",
+          "defaultValue": 421000000,
+          "options": [
+            { "value": 421000000, "label": "Staged" },
+            { "value": 421000001, "label": "Promoted" },
+            { "value": 421000002, "label": "Failed" }
+          ]
+        },
+        { "schemaName": "skl_TotalRows", "displayName": "Total rows", "type": "Integer", "minValue": 0, "maxValue": 1000000, "defaultValue": 0 },
+        { "schemaName": "skl_CreateCount", "displayName": "To create", "type": "Integer", "minValue": 0, "maxValue": 1000000, "defaultValue": 0 },
+        { "schemaName": "skl_UpdateCount", "displayName": "To update", "type": "Integer", "minValue": 0, "maxValue": 1000000, "defaultValue": 0 },
+        { "schemaName": "skl_UnchangedCount", "displayName": "Unchanged", "type": "Integer", "minValue": 0, "maxValue": 1000000, "defaultValue": 0 },
+        { "schemaName": "skl_ErrorCount", "displayName": "Errors", "type": "Integer", "minValue": 0, "maxValue": 1000000, "defaultValue": 0 },
+        { "schemaName": "skl_PromotedOn", "displayName": "Promoted on", "type": "DateTime", "dateOnly": false }
+      ],
+      "alternateKeys": []
+    },
+
+    {
+      "schemaName": "skl_ImportStaging",
+      "logicalName": "skl_importstaging",
+      "displayName": "Import Staging Row",
+      "pluralName": "Import Staging Rows",
+      "description": "One row per spreadsheet row, validated before anything reaches the Employee table (FR-IMP-04/07).",
+      "ownershipType": "UserOwned",
+      "isAuditEnabled": false,
+      "primaryAttribute": {
+        "schemaName": "skl_Name",
+        "displayName": "Name",
+        "maxLength": 200,
+        "description": "Row label, e.g. 'Row 42 - E1043'."
+      },
+      "columns": [
+        {
+          "schemaName": "skl_RowNumber",
+          "displayName": "Row number",
+          "type": "Integer",
+          "minValue": 0,
+          "maxValue": 1000000,
+          "description": "1-based spreadsheet row, so an error points at the real row."
+        },
+        { "schemaName": "skl_EmployeeCode", "displayName": "Employee code", "type": "String", "maxLength": 50 },
+        { "schemaName": "skl_FullName", "displayName": "Full name", "type": "String", "maxLength": 200 },
+        { "schemaName": "skl_Email", "displayName": "Email", "type": "String", "maxLength": 150 },
+        { "schemaName": "skl_Department", "displayName": "Department", "type": "String", "maxLength": 100 },
+        { "schemaName": "skl_Designation", "displayName": "Designation", "type": "String", "maxLength": 100 },
+        { "schemaName": "skl_ManagerEmail", "displayName": "Manager email", "type": "String", "maxLength": 150 },
+        { "schemaName": "skl_Location", "displayName": "Location", "type": "String", "maxLength": 100 },
+        {
+          "schemaName": "skl_DateOfJoiningRaw",
+          "displayName": "Date of joining (raw)",
+          "type": "String",
+          "maxLength": 50,
+          "description": "Held as text so an unparseable date becomes a row error rather than an import failure."
+        },
+        { "schemaName": "skl_EmploymentStatusRaw", "displayName": "Employment status (raw)", "type": "String", "maxLength": 50 },
+        {
+          "schemaName": "skl_Outcome",
+          "displayName": "Outcome",
+          "type": "Choice",
+          "defaultValue": 421000003,
+          "options": [
+            { "value": 421000000, "label": "Create" },
+            { "value": 421000001, "label": "Update" },
+            { "value": 421000002, "label": "Unchanged" },
+            { "value": 421000003, "label": "Error" }
+          ]
+        },
+        { "schemaName": "skl_ValidationMessage", "displayName": "Validation message", "type": "Memo", "maxLength": 2000 }
+      ],
+      "alternateKeys": []
+    }
+  ],
+
+  "relationships": [
+    {
+      "$comment": "Self-referencing reporting line. Drives manager write scope via hierarchy security (FR-SEC-04).",
+      "schemaName": "skl_employee_manager_employee",
+      "referencedTable": "skl_employee",
+      "referencingTable": "skl_employee",
+      "cascadeDelete": "RemoveLink",
+      "lookup": {
+        "schemaName": "skl_Manager",
+        "displayName": "Manager",
+        "required": "None",
+        "description": "Resolved from manager_email during import (FR-IMP-10)."
+      }
+    },
+    {
+      "$comment": "Links an employee to their Dataverse user, which is what makes My Profile and Power BI row-level security work (FR-SEC-06).",
+      "schemaName": "skl_systemuser_employee",
+      "referencedTable": "systemuser",
+      "referencingTable": "skl_employee",
+      "cascadeDelete": "RemoveLink",
+      "lookup": {
+        "schemaName": "skl_User",
+        "displayName": "User",
+        "required": "None",
+        "description": "The signed-in identity for this employee, where one exists."
+      }
+    },
+    {
+      "schemaName": "skl_skillcategory_skill",
+      "referencedTable": "skl_skillcategory",
+      "referencingTable": "skl_skill",
+      "cascadeDelete": "Restrict",
+      "lookup": {
+        "schemaName": "skl_Category",
+        "displayName": "Category",
+        "required": "ApplicationRequired",
+        "description": "Every skill belongs to exactly one category (FR-CAT-01)."
+      }
+    },
+    {
+      "$comment": "Set when a duplicate skill is merged away. The row is kept so historical references stay resolvable (FR-CAT-08).",
+      "schemaName": "skl_skill_mergedinto_skill",
+      "referencedTable": "skl_skill",
+      "referencingTable": "skl_skill",
+      "cascadeDelete": "RemoveLink",
+      "lookup": {
+        "schemaName": "skl_MergedInto",
+        "displayName": "Merged into",
+        "required": "None"
+      }
+    },
+    {
+      "schemaName": "skl_skillcategory_ratinglevel",
+      "referencedTable": "skl_skillcategory",
+      "referencingTable": "skl_ratinglevel",
+      "cascadeDelete": "Cascade",
+      "lookup": {
+        "schemaName": "skl_Category",
+        "displayName": "Category",
+        "required": "None",
+        "description": "Blank means the global scale. A value overrides the wording for that category (FR-RAT-05)."
+      }
+    },
+    {
+      "schemaName": "skl_employee_employeeskill",
+      "referencedTable": "skl_employee",
+      "referencingTable": "skl_employeeskill",
+      "cascadeDelete": "Cascade",
+      "lookup": {
+        "schemaName": "skl_Employee",
+        "displayName": "Employee",
+        "required": "ApplicationRequired"
+      }
+    },
+    {
+      "schemaName": "skl_skill_employeeskill",
+      "referencedTable": "skl_skill",
+      "referencingTable": "skl_employeeskill",
+      "cascadeDelete": "Restrict",
+      "lookup": {
+        "schemaName": "skl_Skill",
+        "displayName": "Skill",
+        "required": "ApplicationRequired"
+      }
+    },
+    {
+      "schemaName": "skl_employeeskill_skillassessment",
+      "referencedTable": "skl_employeeskill",
+      "referencingTable": "skl_skillassessment",
+      "cascadeDelete": "Cascade",
+      "lookup": {
+        "schemaName": "skl_EmployeeSkill",
+        "displayName": "Employee skill",
+        "required": "ApplicationRequired",
+        "description": "The timeline this assessment belongs to."
+      }
+    },
+    {
+      "schemaName": "skl_ratinglevel_skillassessment",
+      "referencedTable": "skl_ratinglevel",
+      "referencingTable": "skl_skillassessment",
+      "cascadeDelete": "Restrict",
+      "lookup": {
+        "schemaName": "skl_RatingLevel",
+        "displayName": "Rating level",
+        "required": "ApplicationRequired",
+        "description": "Constrains the rating to one of the six defined levels (AC-12)."
+      }
+    },
+    {
+      "$comment": "Created after skl_employeeskill_skillassessment so both tables exist. Points at the current live assessment.",
+      "schemaName": "skl_skillassessment_current_employeeskill",
+      "referencedTable": "skl_skillassessment",
+      "referencingTable": "skl_employeeskill",
+      "cascadeDelete": "RemoveLink",
+      "lookup": {
+        "schemaName": "skl_CurrentAssessment",
+        "displayName": "Current assessment",
+        "required": "None",
+        "description": "Derived pointer to the live assessment with the latest effective date."
+      }
+    },
+    {
+      "$comment": "The supersede chain. A correction points back at the row it replaces (ARCHITECTURE.md 5.2).",
+      "schemaName": "skl_skillassessment_supersedes",
+      "referencedTable": "skl_skillassessment",
+      "referencingTable": "skl_skillassessment",
+      "cascadeDelete": "RemoveLink",
+      "lookup": {
+        "schemaName": "skl_Supersedes",
+        "displayName": "Supersedes",
+        "required": "None"
+      }
+    },
+    {
+      "schemaName": "skl_importbatch_importstaging",
+      "referencedTable": "skl_importbatch",
+      "referencingTable": "skl_importstaging",
+      "cascadeDelete": "Cascade",
+      "lookup": {
+        "schemaName": "skl_Batch",
+        "displayName": "Batch",
+        "required": "ApplicationRequired"
+      }
+    },
+    {
+      "schemaName": "skl_employee_importstaging",
+      "referencedTable": "skl_employee",
+      "referencingTable": "skl_importstaging",
+      "cascadeDelete": "RemoveLink",
+      "lookup": {
+        "schemaName": "skl_Employee",
+        "displayName": "Matched employee",
+        "required": "None",
+        "description": "Populated during validation when the row matches an existing employee."
+      }
+    }
+  ]
+}

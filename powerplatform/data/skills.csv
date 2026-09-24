@@ -1,0 +1,81 @@
+name,category,aliases,description
+C,Programming Languages,,Procedural systems programming language.
+C++,Programming Languages,CPP,Systems language with object-oriented and generic programming.
+C#,Programming Languages,CSharp,Managed object-oriented language for the .NET platform.
+Java,Programming Languages,,Object-oriented language running on the JVM.
+Python,Programming Languages,,General-purpose scripting and application language.
+JavaScript,Programming Languages,JS;ECMAScript,Language of the web browser and Node.js runtime.
+TypeScript,Programming Languages,TS,Statically typed superset of JavaScript.
+Go,Programming Languages,Golang,Compiled language for concurrent and networked services.
+Rust,Programming Languages,,Systems language with compile-time memory safety.
+SQL,Programming Languages,,Declarative query language for relational databases.
+Shell Scripting,Programming Languages,Bash;Shell,Automation with bash or POSIX shell.
+PowerShell,Programming Languages,PS,Task automation and configuration on Windows and cross-platform.
+Selenium,Test Automation,Selenium WebDriver,Browser automation for functional web testing.
+Playwright,Test Automation,,Cross-browser end-to-end testing framework.
+Cypress,Test Automation,,JavaScript end-to-end testing framework for web apps.
+Appium,Test Automation,,Automation for native and hybrid mobile applications.
+JUnit,Test Automation,,Unit testing framework for Java.
+TestNG,Test Automation,,Testing framework for Java with richer suite configuration.
+PyTest,Test Automation,,Testing framework for Python.
+Robot Framework,Test Automation,RF,Keyword-driven acceptance testing framework.
+Cucumber,Test Automation,Gherkin;BDD,Behaviour-driven development with Gherkin scenarios.
+REST Assured,Test Automation,RestAssured,Java library for testing REST APIs.
+WebdriverIO,Test Automation,WDIO,Node.js browser and mobile automation framework.
+NUnit,Test Automation,,Unit testing framework for .NET.
+xUnit,Test Automation,,Unit testing framework for .NET.
+JMeter,Test Automation,Apache JMeter,Load and performance testing tool.
+k6,Test Automation,,Developer-centric load testing tool.
+Spring Boot,Frameworks & Libraries,Spring,Java application framework for services and APIs.
+ASP.NET Core,Frameworks & Libraries,.NET;DotNet,Cross-platform web framework for .NET.
+React,Frameworks & Libraries,ReactJS,Component-based UI library for the web.
+Angular,Frameworks & Libraries,,Opinionated front-end application framework.
+Vue.js,Frameworks & Libraries,Vue,Progressive front-end framework.
+Node.js,Frameworks & Libraries,Node,Server-side JavaScript runtime.
+Express,Frameworks & Libraries,ExpressJS,Minimal web framework for Node.js.
+Django,Frameworks & Libraries,,Batteries-included Python web framework.
+Flask,Frameworks & Libraries,,Lightweight Python web framework.
+FastAPI,Frameworks & Libraries,,Async Python framework for APIs.
+Next.js,Frameworks & Libraries,NextJS,React framework with server-side rendering.
+Docker,Cloud & DevOps,,Container build and runtime tooling.
+Kubernetes,Cloud & DevOps,K8s,Container orchestration platform.
+Microsoft Azure,Cloud & DevOps,Azure,Microsoft public cloud platform.
+Amazon Web Services,Cloud & DevOps,AWS,Amazon public cloud platform.
+Google Cloud Platform,Cloud & DevOps,GCP,Google public cloud platform.
+Terraform,Cloud & DevOps,IaC,Declarative infrastructure as code.
+Ansible,Cloud & DevOps,,Agentless configuration management and automation.
+Helm,Cloud & DevOps,,Package manager for Kubernetes.
+Jenkins,Cloud & DevOps,,Extensible build and continuous integration server.
+GitHub Actions,Cloud & DevOps,GHA,CI/CD workflows hosted in GitHub.
+Azure DevOps Pipelines,Cloud & DevOps,ADO Pipelines;AzDO,CI/CD pipelines in Azure DevOps.
+Prometheus,Cloud & DevOps,,Metrics collection and alerting.
+Grafana,Cloud & DevOps,,Dashboards and visualisation for operational metrics.
+PostgreSQL,Databases,Postgres,Open-source relational database.
+Microsoft SQL Server,Databases,MSSQL;SQL Server,Microsoft relational database engine.
+Oracle Database,Databases,Oracle,Oracle relational database engine.
+MySQL,Databases,,Open-source relational database.
+MongoDB,Databases,Mongo,Document-oriented NoSQL database.
+Redis,Databases,,In-memory key-value store and cache.
+Elasticsearch,Databases,ELK,Distributed search and analytics engine.
+Azure Cosmos DB,Databases,Cosmos DB,Globally distributed multi-model database.
+Git,Tools & Platforms,,Distributed version control.
+Jira,Tools & Platforms,,Issue and project tracking.
+Confluence,Tools & Platforms,,Team documentation and knowledge base.
+Postman,Tools & Platforms,,API exploration and testing client.
+Visual Studio Code,Tools & Platforms,VS Code;VSCode,Extensible code editor.
+Power BI,Tools & Platforms,PowerBI,Business intelligence and data visualisation.
+Power Apps,Tools & Platforms,PowerApps,Low-code application platform.
+Dataverse,Tools & Platforms,CDS;Common Data Service,Managed data platform behind Power Apps.
+Power Automate,Tools & Platforms,Flow,Low-code workflow automation.
+Figma,Tools & Platforms,,Collaborative interface design.
+ServiceNow,Tools & Platforms,SNOW,IT service management platform.
+Agile / Scrum,Process & Methodology,Scrum;Agile,Iterative delivery using Scrum ceremonies and roles.
+Kanban,Process & Methodology,,Flow-based delivery with work-in-progress limits.
+Code Review,Process & Methodology,,Reviewing others' changes for correctness and clarity.
+Test Strategy,Process & Methodology,,Designing what to test and at which level.
+CI/CD Practices,Process & Methodology,CICD,Continuous integration and delivery discipline.
+Requirements Analysis,Process & Methodology,BA,Eliciting and specifying what needs to be built.
+Technical Documentation,Process & Methodology,Docs,Writing durable technical and user documentation.
+Mentoring & Coaching,Process & Methodology,Mentoring,Developing the skills of others.
+Incident Management,Process & Methodology,On-call,Responding to and learning from production incidents.
+Application Security,Process & Methodology,AppSec;OWASP,Secure coding and common vulnerability classes.

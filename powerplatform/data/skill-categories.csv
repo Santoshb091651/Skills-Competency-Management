@@ -1,0 +1,8 @@
+name,description,displayOrder
+Programming Languages,General-purpose languages used to build and script systems.,10
+Test Automation,Frameworks and tools for automated functional and non-functional testing.,20
+Frameworks & Libraries,Application frameworks and major libraries built on top of a language.,30
+Cloud & DevOps,"Containers, orchestration, cloud platforms, CI/CD and observability.",40
+Databases,Relational and non-relational data stores and their query languages.,50
+Tools & Platforms,Day-to-day engineering tools and collaboration platforms.,60
+Process & Methodology,"Ways of working, engineering practice and professional skills.",70

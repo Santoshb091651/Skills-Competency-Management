@@ -1,0 +1,7 @@
+value,label,description
+0,None,No practical exposure; has not worked with the skill.
+1,Awareness,Understands the core concepts and vocabulary; cannot yet deliver work unaided.
+2,Novice,"Completes simple, well-defined tasks with guidance and review."
+3,Practitioner,Works independently on routine tasks and resolves common problems without help.
+4,Advanced,"Handles complex or ambiguous work, reviews others' work, and sets local standards."
+5,Expert,"Recognised authority; designs standards, mentors across teams, and solves novel problems."
