@@ -1,20 +1,44 @@
 Screens:
   scrEmployees:
     Properties:
-      Fill: =clrBg
-      OnVisible: =Set(varFormMode, "")
+      Fill: =RGBA(244, 247, 251, 1)
+      OnVisible: |-
+        =Set(varLoading, true);
+        Refresh(EmployeeDetails);
+        Refresh(SkillsList);
+        Refresh(SkillLevels);
+        Refresh(EmployeeSkillsHistory);
+        ClearCollect(colEmployees, EmployeeDetails);
+        ClearCollect(colSkills, SkillsList);
+        ClearCollect(colLevels, SkillLevels);
+        Clear(colHistory);
+        ForAll(
+            colSkills As s,
+            Collect(colHistory, Filter(EmployeeSkillsHistory, SkillName = s.SkillName))
+        );
+        ClearCollect(
+            colLatest,
+            Sort(
+                colHistory,
+                Coalesce(DateDiff(Date(2000, 1, 1), UpdatedDate), 0) * 100000
+                    + Coalesce(Value(Mid(RecordID, 5)), 0),
+                SortOrder.Descending
+            )
+        );
+        Set(varCellW, Max(80, RoundDown(956 / Max(1, CountRows(colSkills)), 0)));
+        Set(varLoading, false)
     Children:
-      - empHeaderBar:
+      - mtxHeaderBar:
           Control: Rectangle
           Properties:
             X: =0
             Y: =0
             Width: =Parent.Width
             Height: =64
-            Fill: =clrCard
-            BorderColor: =clrLine
+            Fill: =RGBA(255, 255, 255, 1)
+            BorderColor: =RGBA(215, 224, 238, 1)
             BorderThickness: =1
-      - empBrandTitle:
+      - mtxBrandTitle:
           Control: Label
           Properties:
             Text: ="SDET Skill Tracker"
@@ -24,8 +48,8 @@ Screens:
             Height: =30
             Size: =16
             FontWeight: =FontWeight.Bold
-            Color: =clrPrimary
-      - empBrandSubtitle:
+            Color: =RGBA(31, 78, 121, 1)
+      - mtxBrandSubtitle:
           Control: Label
           Properties:
             Text: ="Employee · Skills · Ratings"
@@ -34,109 +58,117 @@ Screens:
             Width: =400
             Height: =20
             Size: =10
-            Color: =clrMuted
-      - empNavEmployees:
+            Color: =RGBA(91, 107, 134, 1)
+      - mtxBtnRefresh:
           Control: Classic/Button
           Properties:
-            Text: ="Employees"
-            X: =Parent.Width - 480
+            Text: =If(varLoading, "Loading…", "Refresh")
+            DisplayMode: =If(varLoading, DisplayMode.Disabled, DisplayMode.Edit)
+            X: =Parent.Width - 150
             Y: =12
             Width: =130
             Height: =40
-            Fill: =clrPrimaryLight
-            Color: =clrPrimary
-            BorderThickness: =0
-            OnSelect: =Navigate(scrEmployees, ScreenTransition.None)
-      - empNavSkills:
-          Control: Classic/Button
-          Properties:
-            Text: ="Skills Catalog"
-            X: =Parent.Width - 340
-            Y: =12
-            Width: =150
-            Height: =40
-            Fill: =clrCard
-            Color: =clrMuted
-            BorderThickness: =0
-            OnSelect: =Navigate(scrSkills, ScreenTransition.None)
-      - empNavAdd:
-          Control: Classic/Button
-          Properties:
-            Text: ="+ Add Employee"
-            X: =Parent.Width - 180
-            Y: =12
-            Width: =160
-            Height: =40
-            Fill: =clrPrimary
-            Color: =Color.White
+            Fill: =RGBA(31, 78, 121, 1)
+            Color: =RGBA(255, 255, 255, 1)
             BorderThickness: =0
             OnSelect: |-
-              =Set(varFormMode, "New");
-              Set(varEmployee, Blank());
-              Navigate(scrEmployeeForm, ScreenTransition.Cover)
-      - empPageTitle:
+              =Set(varLoading, true);
+              Refresh(EmployeeDetails);
+              Refresh(SkillsList);
+              Refresh(SkillLevels);
+              Refresh(EmployeeSkillsHistory);
+              ClearCollect(colEmployees, EmployeeDetails);
+              ClearCollect(colSkills, SkillsList);
+              ClearCollect(colLevels, SkillLevels);
+              Clear(colHistory);
+              ForAll(
+                  colSkills As s,
+                  Collect(colHistory, Filter(EmployeeSkillsHistory, SkillName = s.SkillName))
+              );
+              ClearCollect(
+                  colLatest,
+                  Sort(
+                      colHistory,
+                      Coalesce(DateDiff(Date(2000, 1, 1), UpdatedDate), 0) * 100000
+                          + Coalesce(Value(Mid(RecordID, 5)), 0),
+                      SortOrder.Descending
+                  )
+              );
+              Set(varCellW, Max(80, RoundDown(956 / Max(1, CountRows(colSkills)), 0)));
+              Set(varLoading, false)
+      - mtxPageTitle:
           Control: Label
           Properties:
-            Text: ="Employees"
+            Text: ="Employee Skill Matrix"
             X: =20
-            Y: =78
-            Width: =500
+            Y: =76
+            Width: =600
             Height: =40
-            Size: =22
+            Size: =20
             FontWeight: =FontWeight.Bold
-            Color: =clrInk
-      - empPageSubtitle:
+            Color: =RGBA(21, 32, 51, 1)
+      - mtxPageSubtitle:
           Control: Label
           Properties:
-            Text: ="View, create, and manage employee profiles and skill ratings."
+            Text: ="Latest rating per skill for each employee"
             X: =20
-            Y: =116
+            Y: =112
             Width: =600
             Height: =24
             Size: =11
-            Color: =clrMuted
-      - txtEmpSearch:
+            Color: =RGBA(91, 107, 134, 1)
+      - txtMtxSearch:
           Control: Classic/TextInput
           Properties:
             Default: =""
-            HintText: ="Search ID, name, email, designation, manager"
-            X: =Parent.Width - 460
-            Y: =90
-            Width: =340
+            HintText: ="Search ID, name, designation, manager"
+            X: =Parent.Width - 470
+            Y: =86
+            Width: =330
             Height: =40
-            Size: =11
-            BorderColor: =clrLine
-      - empBtnClearSearch:
+            BorderColor: =RGBA(215, 224, 238, 1)
+      - mtxBtnClear:
           Control: Classic/Button
           Properties:
             Text: ="Clear"
-            X: =Parent.Width - 110
-            Y: =90
-            Width: =90
+            X: =Parent.Width - 130
+            Y: =86
+            Width: =110
             Height: =40
-            Fill: =clrCard
-            Color: =clrInk
-            BorderColor: =clrLine
+            Fill: =RGBA(255, 255, 255, 1)
+            Color: =RGBA(21, 32, 51, 1)
+            BorderColor: =RGBA(215, 224, 238, 1)
             BorderThickness: =1
-            OnSelect: =Reset(txtEmpSearch)
-      - empStatCard1:
-          Control: Rectangle
-          Properties:
-            X: =20
-            Y: =156
-            Width: =320
-            Height: =84
-            Fill: =clrCard
-            BorderColor: =clrLine
-            BorderThickness: =1
-      - empStatValue1:
+            OnSelect: =Reset(txtMtxSearch)
+      - mtxLegendLabel:
           Control: Label
           Properties:
-            Text: =CountRows(EmployeeDetails)
-            X: =36
-            Y: =164
-            Width: =280
-            Height: =40
-            Size: =22
-            FontWeight: =FontWeight.Bold
-            Color: =clrPrimary
+            Text: ="Legend"
+            X: =20
+            Y: =146
+            Width: =70
+            Height: =32
+            Size: =10
+            FontWeight: =FontWeight.Semibold
+            Color: =RGBA(91, 107, 134, 1)
+      - galMtxLegend:
+          Control: Gallery
+          Variant: Horizontal
+          Properties:
+            Items: =Sort(colLevels, Value(Rating), SortOrder.Ascending)
+            X: =90
+            Y: =146
+            Width: =640
+            Height: =32
+            TemplateSize: =155
+            TemplatePadding: =0
+            ShowScrollbar: =false
+          Children:
+            - mtxLegendPill:
+                Control: Label
+                Properties:
+                  Text: =Value(ThisItem.Rating) & " = " & ThisItem.Level
+                  X: =0
+                  Y: =2
+                  Width: =145
+                  Height: =28
