@@ -18,7 +18,7 @@ import {
   Card,
   CardHeader
 } from "@fluentui/react-components";
-import { Add16Regular, Delete16Regular, ArrowLeft16Regular, Save16Regular } from "@fluentui/react-icons";
+import { Add16Regular, Delete16Regular, ArrowLeft16Regular, Save16Regular, Dismiss16Regular, ChevronLeft16Regular, ChevronRight16Regular } from "@fluentui/react-icons";
 
 const langMap: Record<number, { code: string; name: string; isRtl: boolean }> = {
   1033: { code: "en-US", name: "English (United States)", isRtl: false },
@@ -35,6 +35,7 @@ const translations: Record<string, Record<string, string>> = {
     actions: "Actions",
     loading: "Loading matrix data definitions...",
     noData: "No employees found.",
+    noMatch: "No employees match the current search or filters.",
     error: "Error loading skills layout.",
     saveSuccess: "All rating changes saved successfully!",
     saveError: "Failed to save rating changes.",
@@ -45,15 +46,29 @@ const translations: Record<string, Record<string, string>> = {
     createSuccess: "Employee onboarding profile created successfully!",
     createError: "Failed to create new employee profiles.",
     back: "Back to Dashboard",
-    saveProfile: "Save Matrix Ratings"
+    saveProfile: "Save Matrix Ratings",
+    searchPlaceholder: "Search by employee ID, name, email or designation",
+    clearFilters: "Clear filters",
+    rowsPerPage: "Rows per page",
+    previous: "Previous",
+    next: "Next"
   },
 };
 
 const ratingOptions = ["0", "1", "2", "3", "4", "5"];
+const pageSizeOptions = [5, 10, 25, 50, 100];
 
 const EMPLOYEE_TABLE = "cr8f7_employee";
 const SKILL_TABLE = "cr8f7_employeeskill";
 const EMPLOYEE_PK = "cr8f7_employeeid";
+
+// Column id -> the Dataverse column its text filter reads.
+const BASE_FIELD_BY_COLUMN: Record<string, string> = {
+  employeename: "cr8f7_employeename",
+  employeeid: "cr8f7_employeeid1",
+  email: "cr8f7_emailaddress",
+  designation: "cr8f7_jobtitle",
+};
 
 // Host method names probed in order. The host that runs a published page does not
 // always expose the same surface the Studio preview does, so never assume one name.
@@ -64,6 +79,27 @@ type WriteApi = {
   create: (table: string, data: Record<string, any>) => Promise<any>;
   remove: (table: string, id: string) => Promise<any>;
   createdVia: string;
+};
+
+// The page host gives the component a fixed-height box and clips the overflow, so the
+// root of every view owns its own scrolling.
+const pageScrollStyle: React.CSSProperties = {
+  padding: 20,
+  width: "100%",
+  height: "100%",
+  maxHeight: "100vh",
+  overflowY: "auto",
+  overflowX: "hidden",
+  boxSizing: "border-box",
+  fontFamily: "Segoe UI, sans-serif",
+};
+
+const headerCellStyle: React.CSSProperties = {
+  display: "flex",
+  flexDirection: "column",
+  gap: 4,
+  padding: "6px 4px",
+  width: "100%",
 };
 
 export default function GeneratedComponent(props: any) {
@@ -96,6 +132,12 @@ export default function GeneratedComponent(props: any) {
   const [isFormSubmitting, setIsFormSubmitting] = React.useState<boolean>(false);
   const [formFields, setFormFields] = React.useState({ empName: "", empId: "", empEmail: "", empTitle: "" });
   const [formSkillRatings, setFormSkillRatings] = React.useState<Record<string, string>>({});
+
+  // Search, per-column filters and paging
+  const [searchText, setSearchText] = React.useState<string>("");
+  const [columnFilters, setColumnFilters] = React.useState<Record<string, string>>({});
+  const [pageSize, setPageSize] = React.useState<number>(10);
+  const [pageIndex, setPageIndex] = React.useState<number>(0);
 
   // Employee Edit Page states
   const [detailSkillRatings, setDetailSkillRatings] = React.useState<Record<string, string>>({});
@@ -166,7 +208,7 @@ export default function GeneratedComponent(props: any) {
       if (typeof api.queryTable === "function") {
         const empResult = await api.queryTable(EMPLOYEE_TABLE, {
           select: [EMPLOYEE_PK, "cr8f7_employeename", "cr8f7_employeeid1", "cr8f7_emailaddress", "cr8f7_jobtitle"],
-          pageSize: 100,
+          pageSize: 5000,
         });
         employeeRecords = empResult?.rows || empResult?.entities || [];
       } else {
@@ -177,7 +219,7 @@ export default function GeneratedComponent(props: any) {
       if (typeof api.queryTable === "function") {
         const skillResult = await api.queryTable(SKILL_TABLE, {
           select: ["cr8f7_employeeidentifier", "cr8f7_skillname", "cr8f7_skillrating", "cr8f7_lastupdateddate"],
-          pageSize: 1000
+          pageSize: 5000
         });
         skillRecords = skillResult?.rows || skillResult?.entities || [];
       } else {
@@ -229,6 +271,54 @@ export default function GeneratedComponent(props: any) {
   React.useEffect(() => {
     fetchMatrixData();
   }, [fetchMatrixData]);
+
+  const filteredEmployees = React.useMemo(() => {
+    const query = searchText.trim().toLowerCase();
+    return employees.filter((emp) => {
+      if (query) {
+        const haystack = [emp.cr8f7_employeeid1, emp.cr8f7_employeename, emp.cr8f7_emailaddress, emp.cr8f7_jobtitle]
+          .map((v) => String(v ?? "").toLowerCase());
+        if (!haystack.some((h) => h.includes(query))) return false;
+      }
+
+      for (const [columnId, value] of Object.entries(columnFilters)) {
+        if (!value) continue;
+        if (columnId.startsWith("skill_")) {
+          const skillName = columnId.slice("skill_".length);
+          if (String(emp[skillName] ?? "-") !== value) return false;
+        } else {
+          const field = BASE_FIELD_BY_COLUMN[columnId];
+          if (!field) continue;
+          if (!String(emp[field] ?? "").toLowerCase().includes(value.toLowerCase())) return false;
+        }
+      }
+      return true;
+    });
+  }, [employees, searchText, columnFilters]);
+
+  const totalRows = filteredEmployees.length;
+  const totalPages = Math.max(1, Math.ceil(totalRows / pageSize));
+  const safePageIndex = Math.min(pageIndex, totalPages - 1);
+  const firstRowNumber = totalRows === 0 ? 0 : safePageIndex * pageSize + 1;
+  const lastRowNumber = Math.min(totalRows, (safePageIndex + 1) * pageSize);
+  const pagedEmployees = React.useMemo(
+    () => filteredEmployees.slice(safePageIndex * pageSize, safePageIndex * pageSize + pageSize),
+    [filteredEmployees, safePageIndex, pageSize]
+  );
+
+  React.useEffect(() => {
+    setPageIndex(0);
+  }, [searchText, columnFilters, pageSize]);
+
+  const hasActiveFilters = searchText.trim().length > 0 || Object.values(columnFilters).some((v) => v);
+
+  const clearAllFilters = () => {
+    setSearchText("");
+    setColumnFilters({});
+  };
+
+  const setColumnFilter = (columnId: string, value: string) =>
+    setColumnFilters((prev) => ({ ...prev, [columnId]: value }));
 
   // Save modified ratings from Employee Edit Page
   const handleBulkSaveDetails = async (e: React.FormEvent) => {
@@ -364,11 +454,23 @@ export default function GeneratedComponent(props: any) {
     }
   };
 
+  const renderTextFilterHeader = (columnId: string, label: string) => (
+    <div style={headerCellStyle} onClick={(e) => e.stopPropagation()}>
+      <Text weight="bold">{label}</Text>
+      <Input
+        size="small"
+        placeholder="Filter"
+        value={columnFilters[columnId] || ""}
+        onChange={(_, d) => setColumnFilter(columnId, d.value)}
+      />
+    </div>
+  );
+
   const baseColumns = [
     createTableColumn({
       columnId: "employeename",
-      minWidth: 180,
-      renderHeaderCell: () => <Text weight="bold" style={{ padding: 8 }}>{t("employeename")}</Text>,
+      minWidth: 200,
+      renderHeaderCell: () => renderTextFilterHeader("employeename", t("employeename")),
       renderCell: (item: any) => (
         <TableCellLayout media={<Avatar name={item.cr8f7_employeename} size={24} aria-hidden="true" />} style={{ color: "#005a9e", fontWeight: "600" }}>
           {item.cr8f7_employeename || ""}
@@ -377,20 +479,20 @@ export default function GeneratedComponent(props: any) {
     }),
     createTableColumn({
       columnId: "employeeid",
-      minWidth: 110,
-      renderHeaderCell: () => <Text weight="bold" style={{ padding: 8 }}>{t("employeeid")}</Text>,
+      minWidth: 150,
+      renderHeaderCell: () => renderTextFilterHeader("employeeid", t("employeeid")),
       renderCell: (item: any) => <TableCellLayout>{item.cr8f7_employeeid1 || ""}</TableCellLayout>,
     }),
     createTableColumn({
       columnId: "email",
       minWidth: 230,
-      renderHeaderCell: () => <Text weight="bold" style={{ padding: 8 }}>{t("email")}</Text>,
+      renderHeaderCell: () => renderTextFilterHeader("email", t("email")),
       renderCell: (item: any) => <TableCellLayout truncate title={item.cr8f7_emailaddress || ""}>{item.cr8f7_emailaddress || ""}</TableCellLayout>,
     }),
     createTableColumn({
       columnId: "designation",
-      minWidth: 180,
-      renderHeaderCell: () => <Text weight="bold" style={{ padding: 8 }}>{t("designation")}</Text>,
+      minWidth: 190,
+      renderHeaderCell: () => renderTextFilterHeader("designation", t("designation")),
       renderCell: (item: any) => <TableCellLayout truncate title={item.cr8f7_jobtitle || ""}>{item.cr8f7_jobtitle || ""}</TableCellLayout>,
     }),
   ];
@@ -398,8 +500,21 @@ export default function GeneratedComponent(props: any) {
   const skillColumns = uniqueSkills.map((skillName) =>
     createTableColumn({
       columnId: `skill_${skillName}`,
-      minWidth: 100,
-      renderHeaderCell: () => <Text weight="bold" style={{ padding: 8 }}>{skillName}</Text>,
+      minWidth: 120,
+      renderHeaderCell: () => (
+        <div style={headerCellStyle} onClick={(e) => e.stopPropagation()}>
+          <Text weight="bold" truncate title={skillName}>{skillName}</Text>
+          <Select
+            size="small"
+            value={columnFilters[`skill_${skillName}`] || ""}
+            onChange={(_, d) => setColumnFilter(`skill_${skillName}`, d.value)}
+          >
+            <option value="">All</option>
+            <option value="-">Not rated</option>
+            {ratingOptions.map((opt) => <option key={opt} value={opt}>{opt}</option>)}
+          </Select>
+        </div>
+      ),
       renderCell: (item: any) => {
         const currentRating = item[skillName] || "-";
         const getPillStyle = (val: string): React.CSSProperties => {
@@ -436,19 +551,21 @@ export default function GeneratedComponent(props: any) {
 
   const allColumns = [...baseColumns, ...skillColumns, ...actionColumn];
 
+  const renderToast = () => toastMessage && (
+    <div style={{ marginBottom: 16, padding: "10px 16px", borderRadius: "4px", fontSize: "14px", fontWeight: "500", backgroundColor: toastMessage.type === "success" ? "#dff6dd" : toastMessage.type === "info" ? "#f3f2f1" : "#fde7e9", color: toastMessage.type === "success" ? "#107c41" : toastMessage.type === "info" ? "#323130" : "#a80000", border: "1px solid #e0e0e0", display: "flex", justifyContent: "space-between", alignItems: "center", gap: "12px" }}>
+      <Text style={{ wordBreak: "break-word" }}>{toastMessage.text}</Text>
+      <Button size="small" type="button" appearance="subtle" onClick={() => setToastMessage(null)}>✕</Button>
+    </div>
+  );
+
   if (loading) return <div style={{ padding: 40, display: "flex", justifyContent: "center", alignItems: "center" }}><Spinner label={t("loading")} /></div>;
   if (error) return <div style={{ padding: 24, color: "#d13438", backgroundColor: "#fde7e9", borderRadius: "4px" }}><Text>{error}</Text></div>;
 
   // PAGE VIEW 2: EMPLOYEE PROFILE EDIT PAGE
   if (viewMode === "details" && selectedEmployee) {
     return (
-      <div dir={isRTL ? "rtl" : "ltr"} style={{ padding: 20, width: "100%", boxSizing: "border-box", fontFamily: "Segoe UI, sans-serif" }}>
-        {toastMessage && (
-          <div style={{ marginBottom: 16, padding: "10px 16px", borderRadius: "4px", fontSize: "14px", fontWeight: "500", backgroundColor: toastMessage.type === "success" ? "#dff6dd" : toastMessage.type === "info" ? "#f3f2f1" : "#fde7e9", color: toastMessage.type === "success" ? "#107c41" : toastMessage.type === "info" ? "#323130" : "#a80000", border: "1px solid #e0e0e0", display: "flex", justifyContent: "space-between", alignItems: "center", gap: "12px" }}>
-            <Text style={{ wordBreak: "break-word" }}>{toastMessage.text}</Text>
-            <Button size="small" type="button" appearance="subtle" onClick={() => setToastMessage(null)}>✕</Button>
-          </div>
-        )}
+      <div dir={isRTL ? "rtl" : "ltr"} style={pageScrollStyle}>
+        {renderToast()}
 
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 24, borderBottom: "2px solid #f3f2f1", paddingBottom: "12px" }}>
           <Button type="button" icon={<ArrowLeft16Regular />} onClick={() => setViewMode("list")}>{t("back")}</Button>
@@ -490,7 +607,7 @@ export default function GeneratedComponent(props: any) {
                 );
               })}
             </div>
-            <div style={{ display: "flex", gap: "12px", justifyContent: "flex-end", borderTop: "1px solid #e0e0e0", paddingTop: "16px" }}>
+            <div style={{ display: "flex", gap: "12px", justifyContent: "flex-end", borderTop: "1px solid #e0e0e0", paddingTop: "16px", position: "sticky", bottom: 0, backgroundColor: "#ffffff" }}>
               <Button type="button" appearance="secondary" onClick={() => setViewMode("list")} disabled={isDetailSaving}>Cancel</Button>
               <Button type="submit" appearance="primary" icon={<Save16Regular />} disabled={isDetailSaving}>
                 {isDetailSaving ? <Spinner size="tiny" label="Saving Changes..." /> : t("saveProfile")}
@@ -503,19 +620,32 @@ export default function GeneratedComponent(props: any) {
   }
 
   return (
-    <div dir={isRTL ? "rtl" : "ltr"} style={{ padding: 20, width: "100%", boxSizing: "border-box", fontFamily: "Segoe UI, sans-serif" }}>
-      {toastMessage && (
-        <div style={{ marginBottom: 16, padding: "10px 16px", borderRadius: "4px", fontSize: "14px", fontWeight: "500", backgroundColor: toastMessage.type === "success" ? "#dff6dd" : toastMessage.type === "info" ? "#f3f2f1" : "#fde7e9", color: toastMessage.type === "success" ? "#107c41" : toastMessage.type === "info" ? "#323130" : "#a80000", border: "1px solid #e0e0e0", display: "flex", justifyContent: "space-between", alignItems: "center", gap: "12px" }}>
-          <Text style={{ wordBreak: "break-word" }}>{toastMessage.text}</Text>
-          <Button size="small" type="button" appearance="subtle" onClick={() => setToastMessage(null)}>✕</Button>
-        </div>
-      )}
+    <div dir={isRTL ? "rtl" : "ltr"} style={pageScrollStyle}>
+      {renderToast()}
 
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20, borderBottom: "2px solid #f3f2f1", paddingBottom: "12px" }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16, borderBottom: "2px solid #f3f2f1", paddingBottom: "12px", gap: 12, flexWrap: "wrap" }}>
         <Text size={600} weight="bold" style={{ color: "#323130" }}>{t("employeesTitle")}</Text>
         <Button type="button" appearance={showForm ? "secondary" : "primary"} icon={<Add16Regular />} onClick={() => setShowForm(!showForm)}>
           {showForm ? t("hideForm") : t("addEmployee")}
         </Button>
+      </div>
+
+      <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 16, flexWrap: "wrap" }}>
+        <Input
+          style={{ flexGrow: 1, minWidth: 260, maxWidth: 480 }}
+          placeholder={t("searchPlaceholder")}
+          value={searchText}
+          onChange={(_, d) => setSearchText(d.value)}
+        />
+        {hasActiveFilters && (
+          <Button type="button" appearance="subtle" icon={<Dismiss16Regular />} onClick={clearAllFilters}>
+            {t("clearFilters")}
+          </Button>
+        )}
+        <Text size={200} style={{ color: "#605e5c", marginLeft: "auto" }}>
+          {totalRows} {totalRows === 1 ? "employee" : "employees"}
+          {hasActiveFilters ? ` (filtered from ${employees.length})` : ""}
+        </Text>
       </div>
 
       {showForm && (
@@ -532,7 +662,7 @@ export default function GeneratedComponent(props: any) {
             {uniqueSkills.length > 0 && (
               <div style={{ marginBottom: 20, borderTop: "1px solid #e0e0e0", paddingTop: 12 }}>
                 <Text weight="semibold" size={300} style={{ display: "block", marginBottom: 12, color: "#605e5c" }}>Initial Skill Proficiency Assignments</Text>
-                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(220px, 1fr))", gap: 10 }}>
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(220px, 1fr))", gap: 10, maxHeight: "40vh", overflowY: "auto", paddingRight: 4 }}>
                   {uniqueSkills.map(skill => (
                     <div key={skill} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "6px 12px", backgroundColor: "#ffffff", borderRadius: 4, border: "1px solid #f3f2f1" }}>
                       <Text size={200} truncate title={skill} style={{ maxWidth: "130px" }}>{skill}</Text>
@@ -557,20 +687,71 @@ export default function GeneratedComponent(props: any) {
       {employees.length === 0 ? (
         <div style={{ padding: 32, textAlign: "center", backgroundColor: "#f3f2f1", borderRadius: "4px" }}><Text size={400} style={{ color: "#605e5c" }}>{t("noData")}</Text></div>
       ) : (
-        <div style={{ overflowX: "auto", border: "1px solid #e0e0e0", borderRadius: "8px", backgroundColor: "#ffffff" }}>
-          <DataGrid items={employees} columns={allColumns} itemsPerGridRow={1} focusMode="row">
-            <DataGridHeader style={{ backgroundColor: "#faf9f8" }}>
-              <DataGridRow>{({ renderHeaderCell }) => <DataGridHeaderCell style={{ borderBottom: "1px solid #e0e0e0" }}>{renderHeaderCell()}</DataGridHeaderCell>}</DataGridRow>
-            </DataGridHeader>
-            <DataGridBody>
-              {({ item, rowId }) => (
-                <DataGridRow key={rowId} style={{ borderBottom: "1px solid #f3f2f1", cursor: "pointer" }} onClick={() => { setSelectedEmployee(item); setDetailSkillRatings({}); setViewMode("details"); }}>
-                  {({ renderCell }) => <DataGridCell style={{ padding: "6px 8px" }}>{renderCell(item)}</DataGridCell>}
-                </DataGridRow>
-              )}
-            </DataGridBody>
-          </DataGrid>
-        </div>
+        <>
+          <div style={{ overflowX: "auto", border: "1px solid #e0e0e0", borderRadius: "8px", backgroundColor: "#ffffff" }}>
+            <DataGrid items={pagedEmployees} columns={allColumns} itemsPerGridRow={1} focusMode="row">
+              <DataGridHeader style={{ backgroundColor: "#faf9f8" }}>
+                <DataGridRow>{({ renderHeaderCell }) => <DataGridHeaderCell style={{ borderBottom: "1px solid #e0e0e0", alignItems: "flex-start" }}>{renderHeaderCell()}</DataGridHeaderCell>}</DataGridRow>
+              </DataGridHeader>
+              <DataGridBody>
+                {({ item, rowId }) => (
+                  <DataGridRow key={rowId} style={{ borderBottom: "1px solid #f3f2f1", cursor: "pointer" }} onClick={() => { setSelectedEmployee(item); setDetailSkillRatings({}); setViewMode("details"); }}>
+                    {({ renderCell }) => <DataGridCell style={{ padding: "6px 8px" }}>{renderCell(item)}</DataGridCell>}
+                  </DataGridRow>
+                )}
+              </DataGridBody>
+            </DataGrid>
+          </div>
+
+          {totalRows === 0 && (
+            <div style={{ padding: 32, textAlign: "center", backgroundColor: "#f3f2f1", borderRadius: "4px", marginTop: 12 }}>
+              <Text size={400} style={{ color: "#605e5c" }}>{t("noMatch")}</Text>
+            </div>
+          )}
+
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 16, flexWrap: "wrap", marginTop: 16, paddingTop: 12, borderTop: "1px solid #f3f2f1" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+              <Text size={300} style={{ color: "#605e5c" }}>{t("rowsPerPage")}</Text>
+              <Select
+                size="small"
+                style={{ minWidth: 80 }}
+                value={String(pageSize)}
+                onChange={(_, d) => setPageSize(parseInt(d.value, 10))}
+              >
+                {pageSizeOptions.map((n) => <option key={n} value={String(n)}>{n}</option>)}
+              </Select>
+            </div>
+
+            <Text size={300} style={{ color: "#605e5c" }}>
+              {firstRowNumber}-{lastRowNumber} of {totalRows}
+            </Text>
+
+            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+              <Button
+                type="button"
+                appearance="secondary"
+                icon={<ChevronLeft16Regular />}
+                disabled={safePageIndex === 0}
+                onClick={() => setPageIndex((p) => Math.max(0, p - 1))}
+              >
+                {t("previous")}
+              </Button>
+              <Text size={300} style={{ color: "#605e5c", minWidth: 90, textAlign: "center" }}>
+                Page {safePageIndex + 1} of {totalPages}
+              </Text>
+              <Button
+                type="button"
+                appearance="secondary"
+                iconPosition="after"
+                icon={<ChevronRight16Regular />}
+                disabled={safePageIndex >= totalPages - 1}
+                onClick={() => setPageIndex((p) => Math.min(totalPages - 1, p + 1))}
+              >
+                {t("next")}
+              </Button>
+            </div>
+          </div>
+        </>
       )}
     </div>
   );
