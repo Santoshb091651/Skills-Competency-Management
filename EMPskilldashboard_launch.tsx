@@ -226,6 +226,8 @@ export default function GeneratedComponent(props: any) {
   const [isSkillSubmitting, setIsSkillSubmitting] = React.useState<boolean>(false);
   const [skillForm, setSkillForm] = React.useState({ name: "", identifier: "" });
   const [identifierTouched, setIdentifierTouched] = React.useState<boolean>(false);
+  const [diagnostics, setDiagnostics] = React.useState<string | null>(null);
+  const [isDiagnosing, setIsDiagnosing] = React.useState<boolean>(false);
 
   // Search, per-column filters and paging
   const [searchText, setSearchText] = React.useState<string>("");
@@ -671,6 +673,65 @@ export default function GeneratedComponent(props: any) {
     }
   };
 
+  // Probes the catalogue table without naming any columns, then with the exact columns this
+  // page uses. Reading with no select proves whether the table name is right and reports the
+  // real column logical names; the second read isolates a wrong column name, which Dataverse
+  // rejects on read as well as on write.
+  const runSkillDiagnostics = async () => {
+    setIsDiagnosing(true);
+    const api = dataApi || context?.webApi;
+    const lines: string[] = [];
+
+    const writeApi = resolveWriteApi();
+    lines.push(`Write method: ${writeApi ? writeApi.createdVia : "NONE FOUND"}`);
+    lines.push(`Host API surface: ${describeApis()}`);
+    lines.push("");
+
+    if (!api) {
+      lines.push("No read API available on this host.");
+      setDiagnostics(lines.join("\n"));
+      setIsDiagnosing(false);
+      return;
+    }
+
+    try {
+      let rows: any[] = [];
+      if (typeof api.queryTable === "function") {
+        const result = await api.queryTable(SKILL_CATALOGUE_TABLE, { pageSize: 1 });
+        rows = result?.rows || result?.entities || [];
+      } else {
+        const result = await api.retrieveMultipleRecords(SKILL_CATALOGUE_TABLE, "?$top=1");
+        rows = result?.entities || [];
+      }
+      lines.push(`Table "${SKILL_CATALOGUE_TABLE}" readable: YES (${rows.length} row returned)`);
+      if (rows.length > 0) {
+        lines.push("Actual columns present on the first row:");
+        lines.push("  " + Object.keys(rows[0]).sort().join(", "));
+      } else {
+        lines.push("Table returned no rows, so column names cannot be read from data.");
+      }
+    } catch (err: any) {
+      lines.push(`Table "${SKILL_CATALOGUE_TABLE}" readable: NO`);
+      lines.push(`  ${describeError(err)}`);
+    }
+
+    lines.push("");
+    try {
+      if (typeof api.queryTable === "function") {
+        await api.queryTable(SKILL_CATALOGUE_TABLE, { select: ["cr8f7_skillname", "cr8f7_skillidentifier"], pageSize: 1 });
+      } else {
+        await api.retrieveMultipleRecords(SKILL_CATALOGUE_TABLE, "?$select=cr8f7_skillname,cr8f7_skillidentifier&$top=1");
+      }
+      lines.push("Columns cr8f7_skillname + cr8f7_skillidentifier: ACCEPTED");
+    } catch (err: any) {
+      lines.push("Columns cr8f7_skillname + cr8f7_skillidentifier: REJECTED");
+      lines.push(`  ${describeError(err)}`);
+    }
+
+    setDiagnostics(lines.join("\n"));
+    setIsDiagnosing(false);
+  };
+
   const handleCreateSkillSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     const writeApi = resolveWriteApi();
@@ -979,7 +1040,10 @@ export default function GeneratedComponent(props: any) {
                 />
               </Field>
             </div>
-            <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
+            <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", flexWrap: "wrap" }}>
+              <Button type="button" appearance="subtle" disabled={isDiagnosing} onClick={runSkillDiagnostics} style={{ marginRight: "auto" }}>
+                {isDiagnosing ? <Spinner size="tiny" label="Checking..." /> : "Diagnose skill table"}
+              </Button>
               <Button
                 type="button"
                 appearance="secondary"
@@ -993,6 +1057,19 @@ export default function GeneratedComponent(props: any) {
               </Button>
             </div>
           </form>
+
+          {diagnostics && (
+            <pre
+              style={{
+                marginTop: 16, marginBottom: 0, padding: 12, backgroundColor: "#ffffff",
+                border: "1px solid #e0e0e0", borderRadius: 4, fontSize: 12,
+                fontFamily: "Consolas, 'Courier New', monospace", whiteSpace: "pre-wrap",
+                wordBreak: "break-word", maxHeight: "30vh", overflowY: "auto", color: "#323130",
+              }}
+            >
+              {diagnostics}
+            </pre>
+          )}
         </div>
       )}
 
