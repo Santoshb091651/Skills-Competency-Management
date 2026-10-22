@@ -6,7 +6,6 @@ import {
   DataGridRow,
   DataGridCell,
   DataGridHeaderCell,
-  TableCellLayout,
   createTableColumn,
   Text,
   Button,
@@ -122,6 +121,8 @@ const cellTextStyle: React.CSSProperties = {
   lineHeight: 1.35,
 };
 
+// overflow hidden is the backstop: if any width calculation is wrong, text is clipped at
+// the column edge instead of being drawn over the neighbouring column.
 const dataCellStyle: React.CSSProperties = {
   padding: "10px 12px",
   alignItems: "flex-start",
@@ -129,6 +130,7 @@ const dataCellStyle: React.CSSProperties = {
   minHeight: 52,
   borderRight: "1px solid #f3f2f1",
   boxSizing: "border-box",
+  overflow: "hidden",
 };
 
 const headerCellOuterStyle: React.CSSProperties = {
@@ -139,6 +141,7 @@ const headerCellOuterStyle: React.CSSProperties = {
   minHeight: 82,
   padding: "8px 12px",
   boxSizing: "border-box",
+  overflow: "hidden",
 };
 
 export default function GeneratedComponent(props: any) {
@@ -443,6 +446,18 @@ export default function GeneratedComponent(props: any) {
     [columnWidths]
   );
 
+  // Space the column spends on padding and ornaments, so the text box can be given the
+  // exact remaining width. A max-width is what forces wrapping; min-width alone lets the
+  // box grow to fit its content and the text then never wraps at all.
+  const contentWidthFor = React.useCallback(
+    (columnId: string) => {
+      const sizing = columnId.startsWith("skill_") ? SKILL_SIZING : BASE_COLUMN_SIZING[columnId];
+      const chrome = sizing ? sizing.chrome : CELL_PADDING_X;
+      return Math.max(24, widthFor(columnId) - Math.max(chrome, CELL_PADDING_X));
+    },
+    [widthFor]
+  );
+
   const columnSizingOptions = React.useMemo(() => {
     const options: Record<string, { minWidth: number; defaultWidth: number; idealWidth: number }> = {};
     Object.entries(columnWidths).forEach(([columnId, width]) => {
@@ -592,20 +607,31 @@ export default function GeneratedComponent(props: any) {
     }
   };
 
-  const headerShell = (columnId: string, children: React.ReactNode) => (
-    <div
-      style={{ display: "flex", flexDirection: "column", gap: 6, width: "100%", minWidth: widthFor(columnId) - CELL_PADDING_X, boxSizing: "border-box" }}
-      onClick={(e) => e.stopPropagation()}
-    >
-      {children}
-    </div>
-  );
+  const headerShell = (columnId: string, children: React.ReactNode) => {
+    const width = widthFor(columnId) - CELL_PADDING_X;
+    return (
+      <div
+        style={{ display: "flex", flexDirection: "column", gap: 6, width, maxWidth: width, minWidth: 0, boxSizing: "border-box" }}
+        onClick={(e) => e.stopPropagation()}
+      >
+        {children}
+      </div>
+    );
+  };
 
-  const cellShell = (columnId: string, children: React.ReactNode) => (
-    <div style={{ width: "100%", minWidth: widthFor(columnId) - CELL_PADDING_X, boxSizing: "border-box", ...cellTextStyle }}>
-      {children}
-    </div>
-  );
+  // TableCellLayout is deliberately not used: its internal slots apply their own
+  // white-space and overflow rules, which is what kept the text from wrapping.
+  const cellShell = (columnId: string, children: React.ReactNode, media?: React.ReactNode) => {
+    const width = contentWidthFor(columnId);
+    return (
+      <div style={{ display: "flex", alignItems: "flex-start", gap: 8, width: "100%", minWidth: 0, boxSizing: "border-box" }}>
+        {media ? <div style={{ flexShrink: 0, paddingTop: 1 }}>{media}</div> : null}
+        <div style={{ width, maxWidth: width, minWidth: 0, boxSizing: "border-box", ...cellTextStyle }}>
+          {children}
+        </div>
+      </div>
+    );
+  };
 
   const renderTextFilterHeader = (columnId: string, label: string) =>
     headerShell(columnId, (
@@ -624,38 +650,30 @@ export default function GeneratedComponent(props: any) {
     createTableColumn({
       columnId: "employeename",
       renderHeaderCell: () => renderTextFilterHeader("employeename", t("employeename")),
-      renderCell: (item: any) => (
-        <TableCellLayout media={<Avatar name={item.cr8f7_employeename} size={24} aria-hidden="true" />}>
-          {cellShell("employeename", (
-            <Text size={300} style={{ ...cellTextStyle, color: "#005a9e", fontWeight: 600 }}>{item.cr8f7_employeename || ""}</Text>
-          ))}
-        </TableCellLayout>
-      ),
+      renderCell: (item: any) =>
+        cellShell(
+          "employeename",
+          <Text size={300} style={{ ...cellTextStyle, color: "#005a9e", fontWeight: 600 }}>{item.cr8f7_employeename || ""}</Text>,
+          <Avatar name={item.cr8f7_employeename} size={24} aria-hidden="true" />
+        ),
     }),
     createTableColumn({
       columnId: "employeeid",
       renderHeaderCell: () => renderTextFilterHeader("employeeid", t("employeeid")),
-      renderCell: (item: any) => (
-        <TableCellLayout>{cellShell("employeeid", <Text size={300} style={cellTextStyle}>{item.cr8f7_employeeid1 || ""}</Text>)}</TableCellLayout>
-      ),
+      renderCell: (item: any) =>
+        cellShell("employeeid", <Text size={300} style={cellTextStyle}>{item.cr8f7_employeeid1 || ""}</Text>),
     }),
     createTableColumn({
       columnId: "email",
       renderHeaderCell: () => renderTextFilterHeader("email", t("email")),
-      renderCell: (item: any) => (
-        <TableCellLayout>
-          {cellShell("email", <Text size={300} style={cellTextStyle} title={item.cr8f7_emailaddress || ""}>{item.cr8f7_emailaddress || ""}</Text>)}
-        </TableCellLayout>
-      ),
+      renderCell: (item: any) =>
+        cellShell("email", <Text size={300} style={cellTextStyle} title={item.cr8f7_emailaddress || ""}>{item.cr8f7_emailaddress || ""}</Text>),
     }),
     createTableColumn({
       columnId: "designation",
       renderHeaderCell: () => renderTextFilterHeader("designation", t("designation")),
-      renderCell: (item: any) => (
-        <TableCellLayout>
-          {cellShell("designation", <Text size={300} style={cellTextStyle} title={item.cr8f7_jobtitle || ""}>{item.cr8f7_jobtitle || ""}</Text>)}
-        </TableCellLayout>
-      ),
+      renderCell: (item: any) =>
+        cellShell("designation", <Text size={300} style={cellTextStyle} title={item.cr8f7_jobtitle || ""}>{item.cr8f7_jobtitle || ""}</Text>),
     }),
   ];
 
@@ -692,7 +710,7 @@ export default function GeneratedComponent(props: any) {
             default: return { ...bs, backgroundColor: "#f3f2f1", color: "#605e5c", fontWeight: "normal" };
           }
         };
-        return <TableCellLayout>{cellShell(columnId, <div style={getPillStyle(currentRating)}>{currentRating}</div>)}</TableCellLayout>;
+        return cellShell(columnId, <div style={getPillStyle(currentRating)}>{currentRating}</div>);
       },
     });
   });
@@ -701,13 +719,10 @@ export default function GeneratedComponent(props: any) {
     createTableColumn({
       columnId: "actions",
       renderHeaderCell: () => headerShell("actions", <Text weight="bold" style={cellTextStyle}>{t("actions")}</Text>),
-      renderCell: (item: any) => (
-        <TableCellLayout>
-          {cellShell("actions", deletingId === item.cr8f7_employeeid1 ? <Spinner size="tiny" /> : (
-            <Button size="small" type="button" appearance="subtle" icon={<Delete16Regular />} style={{ color: "#a80000" }} onClick={(e) => handleDeleteEmployee(item, e)} />
-          ))}
-        </TableCellLayout>
-      ),
+      renderCell: (item: any) =>
+        cellShell("actions", deletingId === item.cr8f7_employeeid1 ? <Spinner size="tiny" /> : (
+          <Button size="small" type="button" appearance="subtle" icon={<Delete16Regular />} style={{ color: "#a80000" }} onClick={(e) => handleDeleteEmployee(item, e)} />
+        )),
     })
   ];
 
