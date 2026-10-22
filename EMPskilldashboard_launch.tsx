@@ -55,7 +55,7 @@ const translations: Record<string, Record<string, string>> = {
     hideSkillForm: "Hide Skill Panel",
     skillSuccess: "Skill added to the catalogue:",
     skillError: "Failed to add the new skill.",
-    skillMissing: "Both a skill name and an identifier are required.",
+    skillMissing: "A skill name and a whole-number identifier are required.",
     skillDuplicate: "A skill already exists with the name",
     skillDuplicateId: "A skill already exists with the identifier"
   },
@@ -69,10 +69,8 @@ const SKILL_TABLE = "cr8f7_employeeskill";
 const SKILL_CATALOGUE_TABLE = "cr8f7_skill";
 const EMPLOYEE_PK = "cr8f7_employeeid";
 
-// Dataverse identifiers are upper snake case; derived from the name so the user does not
-// have to invent one, but left editable because an existing coding scheme may differ.
-const deriveIdentifier = (name: string): string =>
-  name.trim().toUpperCase().replace(/[^A-Z0-9]+/g, "_").replace(/^_+|_+$/g, "").slice(0, 50);
+// cr8f7_skillidentifier is a Whole Number column (Edm.Int32), not text. Posting a string
+// into it fails with "Cannot convert the literal ... to the expected type 'Edm.Int32'".
 
 // Hosts wrap Dataverse faults differently and err.message is often just "Request failed".
 // The privilege name or the offending column sits further down, so dig through the shapes
@@ -209,7 +207,7 @@ export default function GeneratedComponent(props: any) {
 
   const [employees, setEmployees] = React.useState<any[]>([]);
   const [uniqueSkills, setUniqueSkills] = React.useState<string[]>([]);
-  const [skillCatalogue, setSkillCatalogue] = React.useState<{ name: string; identifier: string }[]>([]);
+  const [skillCatalogue, setSkillCatalogue] = React.useState<{ name: string; identifier: number | null }[]>([]);
   const [catalogueWarning, setCatalogueWarning] = React.useState<string | null>(null);
   const [loading, setLoading] = React.useState<boolean>(true);
   const [error, setError] = React.useState<string | null>(null);
@@ -225,7 +223,6 @@ export default function GeneratedComponent(props: any) {
   const [showSkillForm, setShowSkillForm] = React.useState<boolean>(false);
   const [isSkillSubmitting, setIsSkillSubmitting] = React.useState<boolean>(false);
   const [skillForm, setSkillForm] = React.useState({ name: "", identifier: "" });
-  const [identifierTouched, setIdentifierTouched] = React.useState<boolean>(false);
   const [diagnostics, setDiagnostics] = React.useState<string | null>(null);
   const [isDiagnosing, setIsDiagnosing] = React.useState<boolean>(false);
 
@@ -348,10 +345,14 @@ export default function GeneratedComponent(props: any) {
 
       setSkillCatalogue(
         catalogueRecords
-          .map((r: any) => ({
-            name: String(r.cr8f7_skillname ?? "").trim(),
-            identifier: String(r.cr8f7_skillidentifier ?? "").trim(),
-          }))
+          .map((r: any) => {
+            const raw = r.cr8f7_skillidentifier;
+            const parsed = raw === null || raw === undefined || raw === "" ? NaN : Number(raw);
+            return {
+              name: String(r.cr8f7_skillname ?? "").trim(),
+              identifier: Number.isFinite(parsed) ? parsed : null,
+            };
+          })
           .filter((s) => s.name)
       );
 
@@ -455,6 +456,14 @@ export default function GeneratedComponent(props: any) {
 
   const setColumnFilter = (columnId: string, value: string) =>
     setColumnFilters((prev) => ({ ...prev, [columnId]: value }));
+
+  // Identifier is a number, so the sensible default is one past the highest in use.
+  const nextSkillIdentifier = React.useMemo(() => {
+    const used = skillCatalogue
+      .map((s) => s.identifier)
+      .filter((n): n is number => typeof n === "number" && Number.isFinite(n));
+    return used.length > 0 ? Math.max(...used) + 1 : 1;
+  }, [skillCatalogue]);
 
   // Measures real pixel width in the grid's own font, so auto-fit reflects what actually
   // renders instead of approximating from character counts.
@@ -741,8 +750,8 @@ export default function GeneratedComponent(props: any) {
     }
 
     const name = skillForm.name.trim();
-    const identifier = (skillForm.identifier.trim() || deriveIdentifier(name));
-    if (!name || !identifier) {
+    const identifier = Number.parseInt(skillForm.identifier.trim(), 10);
+    if (!name || !Number.isInteger(identifier)) {
       setToastMessage({ text: t("skillMissing"), type: "error" });
       return;
     }
@@ -753,8 +762,8 @@ export default function GeneratedComponent(props: any) {
       setToastMessage({ text: `${t("skillDuplicate")} "${name}"`, type: "error" });
       return;
     }
-    if (skillCatalogue.some((s) => s.identifier && s.identifier.toLowerCase() === identifier.toLowerCase())) {
-      setToastMessage({ text: `${t("skillDuplicateId")} "${identifier}"`, type: "error" });
+    if (skillCatalogue.some((s) => s.identifier === identifier)) {
+      setToastMessage({ text: `${t("skillDuplicateId")} ${identifier}`, type: "error" });
       return;
     }
 
@@ -766,7 +775,6 @@ export default function GeneratedComponent(props: any) {
       });
       setToastMessage({ text: `${t("skillSuccess")} "${name}"`, type: "success" });
       setSkillForm({ name: "", identifier: "" });
-      setIdentifierTouched(false);
       setShowSkillForm(false);
       await fetchMatrixData();
     } catch (err: any) {
@@ -994,7 +1002,16 @@ export default function GeneratedComponent(props: any) {
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16, borderBottom: "2px solid #f3f2f1", paddingBottom: "12px", gap: 12, flexWrap: "wrap" }}>
         <Text size={600} weight="bold" style={{ color: "#323130" }}>{t("employeesTitle")}</Text>
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-          <Button type="button" appearance={showSkillForm ? "primary" : "secondary"} icon={<Add16Regular />} onClick={() => setShowSkillForm(!showSkillForm)}>
+          <Button
+            type="button"
+            appearance={showSkillForm ? "primary" : "secondary"}
+            icon={<Add16Regular />}
+            onClick={() => {
+              const opening = !showSkillForm;
+              setShowSkillForm(opening);
+              if (opening) setSkillForm({ name: "", identifier: String(nextSkillIdentifier) });
+            }}
+          >
             {showSkillForm ? t("hideSkillForm") : t("addSkill")}
           </Button>
           <Button type="button" appearance={showForm ? "secondary" : "primary"} icon={<Add16Regular />} onClick={() => setShowForm(!showForm)}>
@@ -1024,18 +1041,18 @@ export default function GeneratedComponent(props: any) {
                 <Input
                   value={skillForm.name}
                   placeholder="e.g. Playwright"
-                  onChange={(_, d) => setSkillForm((p) => ({
-                    name: d.value,
-                    identifier: identifierTouched ? p.identifier : deriveIdentifier(d.value),
-                  }))}
+                  onChange={(_, d) => setSkillForm((p) => ({ ...p, name: d.value }))}
                   required
                 />
               </Field>
-              <Field label="Skill Identifier" required hint="Auto-filled from the name. Edit if you use a different coding scheme.">
+              <Field label="Skill Identifier" required hint="Whole number. Prefilled with the next free value in the catalogue.">
                 <Input
+                  type="number"
+                  min={1}
+                  step={1}
                   value={skillForm.identifier}
-                  placeholder="e.g. PLAYWRIGHT"
-                  onChange={(_, d) => { setIdentifierTouched(true); setSkillForm((p) => ({ ...p, identifier: d.value })); }}
+                  placeholder={String(nextSkillIdentifier)}
+                  onChange={(_, d) => setSkillForm((p) => ({ ...p, identifier: d.value }))}
                   required
                 />
               </Field>
@@ -1048,7 +1065,7 @@ export default function GeneratedComponent(props: any) {
                 type="button"
                 appearance="secondary"
                 disabled={isSkillSubmitting}
-                onClick={() => { setShowSkillForm(false); setSkillForm({ name: "", identifier: "" }); setIdentifierTouched(false); }}
+                onClick={() => { setShowSkillForm(false); setSkillForm({ name: "", identifier: "" }); }}
               >
                 Cancel
               </Button>
