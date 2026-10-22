@@ -70,18 +70,23 @@ const BASE_FIELD_BY_COLUMN: Record<string, string> = {
   designation: "cr8f7_jobtitle",
 };
 
-// Single source of truth for column widths. Fluent ignores a minWidth passed into
-// createTableColumn, so the same numbers are fed to columnSizingOptions and to an
-// explicit minWidth on each cell's content. Either mechanism alone stops the overlap;
-// both together survive a host shipping a different Fluent build.
-const BASE_COLUMN_WIDTHS: Record<string, number> = {
-  employeename: 250,
-  employeeid: 150,
-  email: 260,
-  designation: 190,
-  actions: 90,
+// Column widths are measured from the data at render time rather than hard-coded. Fluent
+// ignores a minWidth passed into createTableColumn, so the measured numbers are fed both to
+// columnSizingOptions and to an explicit minWidth on each cell's content; either mechanism
+// alone stops the overlap, both together survive a host shipping a different Fluent build.
+// Each column is clamped: below min the header's filter control stops being usable, above
+// max the value wraps to a second line rather than pushing other columns off-screen.
+// chrome covers cell padding plus any fixed ornament such as the avatar.
+type ColumnSizing = { min: number; max: number; chrome: number; flexible: boolean };
+
+const BASE_COLUMN_SIZING: Record<string, ColumnSizing> = {
+  employeename: { min: 170, max: 300, chrome: 60, flexible: true },
+  employeeid: { min: 130, max: 200, chrome: 28, flexible: false },
+  email: { min: 180, max: 320, chrome: 28, flexible: true },
+  designation: { min: 150, max: 260, chrome: 28, flexible: true },
+  actions: { min: 80, max: 80, chrome: 0, flexible: false },
 };
-const SKILL_COLUMN_WIDTH = 140;
+const SKILL_SIZING: ColumnSizing = { min: 112, max: 200, chrome: 28, flexible: false };
 const CELL_PADDING_X = 24;
 
 // Host method names probed in order. The host that runs a published page does not
@@ -108,9 +113,11 @@ const pageScrollStyle: React.CSSProperties = {
   fontFamily: "Segoe UI, sans-serif",
 };
 
+// break-word rather than anywhere: only words that cannot fit are split, so names and job
+// titles wrap at spaces while a long email still breaks instead of overflowing.
 const cellTextStyle: React.CSSProperties = {
   whiteSpace: "normal",
-  overflowWrap: "anywhere",
+  overflowWrap: "break-word",
   wordBreak: "break-word",
   lineHeight: 1.35,
 };
@@ -352,29 +359,103 @@ export default function GeneratedComponent(props: any) {
   const setColumnFilter = (columnId: string, value: string) =>
     setColumnFilters((prev) => ({ ...prev, [columnId]: value }));
 
+  // Measures real pixel width in the grid's own font, so auto-fit reflects what actually
+  // renders instead of approximating from character counts.
+  const measureText = React.useMemo(() => {
+    let ctx: CanvasRenderingContext2D | null = null;
+    try {
+      ctx = document.createElement("canvas").getContext("2d");
+    } catch {
+      ctx = null;
+    }
+    return (text: string, bold: boolean): number => {
+      if (!text) return 0;
+      if (!ctx) return text.length * (bold ? 7.8 : 7.2);
+      ctx.font = `${bold ? 600 : 400} 14px 'Segoe UI', sans-serif`;
+      return ctx.measureText(text).width;
+    };
+  }, []);
+
+  const gridWrapperRef = React.useRef<HTMLDivElement | null>(null);
+  const [availableWidth, setAvailableWidth] = React.useState<number>(0);
+
+  React.useEffect(() => {
+    const element = gridWrapperRef.current;
+    if (!element || typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver((entries) => {
+      setAvailableWidth(entries[0]?.contentRect?.width ?? 0);
+    });
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, [employees.length]);
+
+  const columnWidths = React.useMemo(() => {
+    const labels: Record<string, string> = {
+      employeename: t("employeename"),
+      employeeid: t("employeeid"),
+      email: t("email"),
+      designation: t("designation"),
+      actions: t("actions"),
+    };
+
+    const fitted: Record<string, number> = {};
+
+    // Widest of the header label and every value in the column, measured across the whole
+    // result set rather than the current page so widths do not jump when paging.
+    Object.entries(BASE_COLUMN_SIZING).forEach(([columnId, sizing]) => {
+      const field = BASE_FIELD_BY_COLUMN[columnId];
+      let widest = measureText(labels[columnId] ?? "", true);
+      if (field) {
+        employees.forEach((emp) => {
+          const width = measureText(String(emp[field] ?? ""), false);
+          if (width > widest) widest = width;
+        });
+      }
+      fitted[columnId] = Math.min(sizing.max, Math.max(sizing.min, Math.ceil(widest) + sizing.chrome));
+    });
+
+    // A skill cell holds a fixed-width pill, so only the header name drives its width.
+    uniqueSkills.forEach((skillName) => {
+      const widest = measureText(skillName, true);
+      fitted[`skill_${skillName}`] = Math.min(
+        SKILL_SIZING.max,
+        Math.max(SKILL_SIZING.min, Math.ceil(widest) + SKILL_SIZING.chrome)
+      );
+    });
+
+    // Spread leftover room across the text columns so a narrow matrix fills the grid
+    // instead of leaving a dead gap down the right-hand side.
+    const total = Object.values(fitted).reduce((sum, width) => sum + width, 0);
+    const slack = availableWidth - total - 2;
+    if (slack > 0) {
+      const flexible = Object.keys(BASE_COLUMN_SIZING).filter((id) => BASE_COLUMN_SIZING[id].flexible);
+      if (flexible.length > 0) {
+        const share = Math.floor(slack / flexible.length);
+        flexible.forEach((id) => { fitted[id] += share; });
+      }
+    }
+
+    return fitted;
+  }, [employees, uniqueSkills, availableWidth, measureText, t]);
+
   const widthFor = React.useCallback(
-    (columnId: string) => (columnId.startsWith("skill_") ? SKILL_COLUMN_WIDTH : BASE_COLUMN_WIDTHS[columnId] ?? 150),
-    []
+    (columnId: string) => columnWidths[columnId] ?? SKILL_SIZING.min,
+    [columnWidths]
   );
 
   const columnSizingOptions = React.useMemo(() => {
     const options: Record<string, { minWidth: number; defaultWidth: number; idealWidth: number }> = {};
-    Object.entries(BASE_COLUMN_WIDTHS).forEach(([columnId, width]) => {
+    Object.entries(columnWidths).forEach(([columnId, width]) => {
       options[columnId] = { minWidth: width, defaultWidth: width, idealWidth: width };
     });
-    uniqueSkills.forEach((skillName) => {
-      options[`skill_${skillName}`] = { minWidth: SKILL_COLUMN_WIDTH, defaultWidth: SKILL_COLUMN_WIDTH, idealWidth: SKILL_COLUMN_WIDTH };
-    });
     return options;
-  }, [uniqueSkills]);
+  }, [columnWidths]);
 
-  // Forces the table wider than its wrapper once there are enough skills, which is what
-  // actually makes the wrapper's horizontal scrollbar appear.
+  // Forces the table wider than its wrapper once the fitted columns exceed the viewport,
+  // which is what actually makes the wrapper's horizontal scrollbar appear.
   const gridMinWidth = React.useMemo(
-    () =>
-      Object.values(BASE_COLUMN_WIDTHS).reduce((sum, w) => sum + w, 0) +
-      uniqueSkills.length * SKILL_COLUMN_WIDTH,
-    [uniqueSkills]
+    () => Object.values(columnWidths).reduce((sum, width) => sum + width, 0),
+    [columnWidths]
   );
 
   // Save modified ratings from Employee Edit Page
@@ -769,7 +850,7 @@ export default function GeneratedComponent(props: any) {
         <div style={{ padding: 32, textAlign: "center", backgroundColor: "#f3f2f1", borderRadius: "4px" }}><Text size={400} style={{ color: "#605e5c" }}>{t("noData")}</Text></div>
       ) : (
         <>
-          <div style={{ overflowX: "auto", overflowY: "auto", maxHeight: "62vh", border: "1px solid #e0e0e0", borderRadius: "8px", backgroundColor: "#ffffff" }}>
+          <div ref={gridWrapperRef} style={{ overflowX: "auto", overflowY: "auto", maxHeight: "62vh", border: "1px solid #e0e0e0", borderRadius: "8px", backgroundColor: "#ffffff" }}>
             <DataGrid
               items={pagedEmployees}
               columns={allColumns}
