@@ -74,6 +74,37 @@ const EMPLOYEE_PK = "cr8f7_employeeid";
 const deriveIdentifier = (name: string): string =>
   name.trim().toUpperCase().replace(/[^A-Z0-9]+/g, "_").replace(/^_+|_+$/g, "").slice(0, 50);
 
+// Hosts wrap Dataverse faults differently and err.message is often just "Request failed".
+// The privilege name or the offending column sits further down, so dig through the shapes
+// seen in practice before falling back to serialising the whole object.
+const describeError = (err: any): string => {
+  if (!err) return "Unknown error";
+  if (typeof err === "string") return err;
+
+  const parts: string[] = [];
+  const add = (value: any) => {
+    if (typeof value === "string" && value.trim() && !parts.includes(value)) parts.push(value.trim());
+  };
+
+  add(err.message);
+  add(err?.error?.message);
+  add(err?.response?.data?.error?.message);
+  add(err?.data?.error?.message);
+  add(err?.raw);
+  if (err.code !== undefined && err.code !== null) add(`code=${err.code}`);
+  if (err.errorCode !== undefined && err.errorCode !== null) add(`errorCode=${err.errorCode}`);
+  if (err.status !== undefined && err.status !== null) add(`status=${err.status}`);
+
+  if (parts.length === 0) {
+    try {
+      return JSON.stringify(err, Object.getOwnPropertyNames(err)).slice(0, 500);
+    } catch {
+      return String(err);
+    }
+  }
+  return parts.join(" | ");
+};
+
 // Column id -> the Dataverse column its text filter reads.
 const BASE_FIELD_BY_COLUMN: Record<string, string> = {
   employeename: "cr8f7_employeename",
@@ -179,6 +210,7 @@ export default function GeneratedComponent(props: any) {
   const [employees, setEmployees] = React.useState<any[]>([]);
   const [uniqueSkills, setUniqueSkills] = React.useState<string[]>([]);
   const [skillCatalogue, setSkillCatalogue] = React.useState<{ name: string; identifier: string }[]>([]);
+  const [catalogueWarning, setCatalogueWarning] = React.useState<string | null>(null);
   const [loading, setLoading] = React.useState<boolean>(true);
   const [error, setError] = React.useState<string | null>(null);
   const [toastMessage, setToastMessage] = React.useState<{ text: string; type: "success" | "error" | "info" } | null>(null);
@@ -293,6 +325,7 @@ export default function GeneratedComponent(props: any) {
       // gets a column. A failure here must not blank the dashboard, so it falls back to the
       // skills implied by the rating rows.
       let catalogueRecords: any[] = [];
+      setCatalogueWarning(null);
       try {
         if (typeof api.queryTable === "function") {
           const catalogueResult = await api.queryTable(SKILL_CATALOGUE_TABLE, {
@@ -304,8 +337,11 @@ export default function GeneratedComponent(props: any) {
           const catalogueResult = await api.retrieveMultipleRecords(SKILL_CATALOGUE_TABLE, "?$select=cr8f7_skillname,cr8f7_skillidentifier");
           catalogueRecords = catalogueResult?.entities || [];
         }
-      } catch {
+      } catch (catalogueError: any) {
+        // Previously swallowed. If the catalogue cannot be read, the same table name and
+        // privileges are about to fail the write too, so say so instead of hiding it.
         catalogueRecords = [];
+        setCatalogueWarning(`Could not read the skill catalogue (${SKILL_CATALOGUE_TABLE}): ${describeError(catalogueError)}`);
       }
 
       setSkillCatalogue(
@@ -567,7 +603,7 @@ export default function GeneratedComponent(props: any) {
 
       const failures = results.filter(r => r.status === "rejected") as PromiseRejectedResult[];
       if (failures.length > 0) {
-        const reason = (failures[0].reason as any)?.message || "Dataverse Fault";
+        const reason = describeError((failures[0] as any).reason);
         setToastMessage({ text: `${t("saveError")} ${failures.length} of ${pending.length} failed via ${writeApi.createdVia}: ${reason}`, type: "error" });
         await fetchMatrixData();
         return;
@@ -577,7 +613,7 @@ export default function GeneratedComponent(props: any) {
       await fetchMatrixData();
       setViewMode("list");
     } catch (err: any) {
-      setToastMessage({ text: `${t("saveError")} (${err?.message || "Dataverse Fault"})`, type: "error" });
+      setToastMessage({ text: `${t("saveError")} (${describeError(err)})`, type: "error" });
     } finally {
       setIsDetailSaving(false);
     }
@@ -617,7 +653,7 @@ export default function GeneratedComponent(props: any) {
 
       const failures = results.filter(r => r.status === "rejected") as PromiseRejectedResult[];
       if (failures.length > 0) {
-        const reason = (failures[0].reason as any)?.message || "Dataverse Fault";
+        const reason = describeError((failures[0] as any).reason);
         setToastMessage({ text: `Employee created, but ${failures.length} of ${pending.length} ratings failed: ${reason}`, type: "error" });
         await fetchMatrixData();
         return;
@@ -629,7 +665,7 @@ export default function GeneratedComponent(props: any) {
       setFormSkillRatings({});
       await fetchMatrixData();
     } catch (err: any) {
-      setToastMessage({ text: `${t("createError")} (via ${writeApi.createdVia}: ${err?.message || "Dataverse Fault"})`, type: "error" });
+      setToastMessage({ text: `${t("createError")} (via ${writeApi.createdVia}: ${describeError(err)})`, type: "error" });
     } finally {
       setIsFormSubmitting(false);
     }
@@ -673,7 +709,7 @@ export default function GeneratedComponent(props: any) {
       setShowSkillForm(false);
       await fetchMatrixData();
     } catch (err: any) {
-      setToastMessage({ text: `${t("skillError")} (via ${writeApi.createdVia}: ${err?.message || "Dataverse Fault"})`, type: "error" });
+      setToastMessage({ text: `${t("skillError")} (via ${writeApi.createdVia}: ${describeError(err)})`, type: "error" });
     } finally {
       setIsSkillSubmitting(false);
     }
@@ -701,7 +737,7 @@ export default function GeneratedComponent(props: any) {
       setToastMessage({ text: t("deleteSuccess"), type: "success" });
       await fetchMatrixData();
     } catch (err: any) {
-      setToastMessage({ text: `${t("deleteError")} (${err?.message})`, type: "error" });
+      setToastMessage({ text: `${t("deleteError")} (${describeError(err)})`, type: "error" });
     } finally {
       setDeletingId(null);
     }
@@ -905,6 +941,15 @@ export default function GeneratedComponent(props: any) {
           </Button>
         </div>
       </div>
+
+      {catalogueWarning && (
+        <div style={{ marginBottom: 16, padding: "10px 16px", borderRadius: 4, backgroundColor: "#fff4ce", border: "1px solid #f2d783", display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12 }}>
+          <Text size={200} style={{ color: "#6b5900", wordBreak: "break-word" }}>
+            {catalogueWarning} Columns are falling back to skills found on existing rating rows, and adding a new skill will fail for the same reason.
+          </Text>
+          <Button size="small" type="button" appearance="subtle" onClick={() => setCatalogueWarning(null)}>✕</Button>
+        </div>
+      )}
 
       {showSkillForm && (
         <div style={{ marginBottom: 24, padding: 20, backgroundColor: "#f6f9fc", borderRadius: 8, border: "1px solid #cfe3f5", boxShadow: "0 2px 8px rgba(0,0,0,0.05)" }}>
