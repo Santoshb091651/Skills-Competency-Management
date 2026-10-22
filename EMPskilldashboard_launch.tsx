@@ -24,7 +24,10 @@ import {
   DialogContent,
   DialogActions
 } from "@fluentui/react-components";
-import { Add16Regular, Delete16Regular, ArrowLeft16Regular, Save16Regular, Dismiss16Regular, ChevronLeft16Regular, ChevronRight16Regular, ColumnTriple16Regular } from "@fluentui/react-icons";
+// Only icons already proven to resolve in this host are imported. The icon set is served as
+// a bundled module and does not expose every glyph at every size, so a name that exists in
+// the published package can still fail to link here (ColumnTriple16Regular did).
+import { Add16Regular, Delete16Regular, ArrowLeft16Regular, Save16Regular, Dismiss16Regular, ChevronLeft16Regular, ChevronRight16Regular } from "@fluentui/react-icons";
 
 const langMap: Record<number, { code: string; name: string; isRtl: boolean }> = {
   1033: { code: "en-US", name: "English (United States)", isRtl: false },
@@ -1283,7 +1286,6 @@ export default function GeneratedComponent(props: any) {
           <Button
             type="button"
             appearance={showColumnPanel ? "primary" : "secondary"}
-            icon={<ColumnTriple16Regular />}
             onClick={() => setShowColumnPanel(!showColumnPanel)}
           >
             {showColumnPanel ? t("hideColumnsPanel") : `${t("columns")}${hiddenCount > 0 ? ` (${hiddenCount} hidden)` : ""}`}
