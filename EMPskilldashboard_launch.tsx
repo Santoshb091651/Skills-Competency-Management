@@ -16,6 +16,7 @@ import {
   Input,
   Card,
   CardHeader,
+  Checkbox,
   Dialog,
   DialogSurface,
   DialogBody,
@@ -23,7 +24,7 @@ import {
   DialogContent,
   DialogActions
 } from "@fluentui/react-components";
-import { Add16Regular, Delete16Regular, ArrowLeft16Regular, Save16Regular, Dismiss16Regular, ChevronLeft16Regular, ChevronRight16Regular } from "@fluentui/react-icons";
+import { Add16Regular, Delete16Regular, ArrowLeft16Regular, Save16Regular, Dismiss16Regular, ChevronLeft16Regular, ChevronRight16Regular, ColumnTriple16Regular } from "@fluentui/react-icons";
 
 const langMap: Record<number, { code: string; name: string; isRtl: boolean }> = {
   1033: { code: "en-US", name: "English (United States)", isRtl: false },
@@ -37,6 +38,7 @@ const translations: Record<string, Record<string, string>> = {
     employeeid: "Employee ID",
     email: "Email",
     designation: "Designation",
+    manager: "Manager",
     actions: "Actions",
     loading: "Loading matrix data definitions...",
     noData: "No employees found.",
@@ -52,7 +54,7 @@ const translations: Record<string, Record<string, string>> = {
     createError: "Failed to create new employee profiles.",
     back: "Back to Dashboard",
     saveProfile: "Save Matrix Ratings",
-    searchPlaceholder: "Search by employee ID, name, email or designation",
+    searchPlaceholder: "Search by employee ID, name, email, designation or manager",
     clearFilters: "Clear filters",
     rowsPerPage: "Rows per page",
     previous: "Previous",
@@ -69,7 +71,12 @@ const translations: Record<string, Record<string, string>> = {
     deleteSkillTitle: "Delete skill",
     deleteEmployeeTitle: "Delete employee",
     cancel: "Cancel",
-    confirmDelete: "Delete"
+    confirmDelete: "Delete",
+    columns: "Columns",
+    hideColumnsPanel: "Hide Column Panel",
+    showAllColumns: "Show all",
+    hideAllSkills: "Hide all skills",
+    showAllSkills: "Show all skills"
   },
 };
 
@@ -155,7 +162,12 @@ const BASE_FIELD_BY_COLUMN: Record<string, string> = {
   employeeid: "cr8f7_employeeid1",
   email: "cr8f7_emailaddress",
   designation: "cr8f7_jobtitle",
+  manager: "cr8f7_managername",
 };
+
+// Left-to-right order of the non-skill columns. Skills sit between these and actions.
+const BASE_COLUMN_ORDER = ["employeename", "employeeid", "email", "designation", "manager"];
+const EMPLOYEE_SELECT = [EMPLOYEE_PK, ...BASE_COLUMN_ORDER.map((id) => BASE_FIELD_BY_COLUMN[id])];
 
 // Column widths are measured from the data at render time rather than hard-coded. Fluent
 // ignores a minWidth passed into createTableColumn, so the measured numbers are fed both to
@@ -171,6 +183,7 @@ const BASE_COLUMN_SIZING: Record<string, ColumnSizing> = {
   employeeid: { min: 130, max: 200, chrome: 28, flexible: false },
   email: { min: 180, max: 320, chrome: 28, flexible: true },
   designation: { min: 150, max: 260, chrome: 28, flexible: true },
+  manager: { min: 150, max: 260, chrome: 28, flexible: true },
   actions: { min: 80, max: 80, chrome: 0, flexible: false },
 };
 // chrome leaves room for the header's delete button alongside the skill name.
@@ -275,7 +288,7 @@ export default function GeneratedComponent(props: any) {
   const [isDeleting, setIsDeleting] = React.useState<boolean>(false);
   const [showForm, setShowForm] = React.useState<boolean>(false);
   const [isFormSubmitting, setIsFormSubmitting] = React.useState<boolean>(false);
-  const [formFields, setFormFields] = React.useState({ empName: "", empId: "", empEmail: "", empTitle: "" });
+  const [formFields, setFormFields] = React.useState({ empName: "", empId: "", empEmail: "", empTitle: "", empManager: "" });
   const [formSkillRatings, setFormSkillRatings] = React.useState<Record<string, string>>({});
 
   // Add-a-skill panel
@@ -284,6 +297,11 @@ export default function GeneratedComponent(props: any) {
   const [skillForm, setSkillForm] = React.useState({ name: "", identifier: "" });
   const [diagnostics, setDiagnostics] = React.useState<string | null>(null);
   const [isDiagnosing, setIsDiagnosing] = React.useState<boolean>(false);
+
+  // Tracks hidden rather than visible columns so a newly added skill shows up by default
+  // instead of needing to be ticked on.
+  const [hiddenColumns, setHiddenColumns] = React.useState<Record<string, boolean>>({});
+  const [showColumnPanel, setShowColumnPanel] = React.useState<boolean>(false);
 
   // Search, per-column filters and paging
   const [searchText, setSearchText] = React.useState<string>("");
@@ -358,13 +376,10 @@ export default function GeneratedComponent(props: any) {
 
       // The primary key is selected explicitly; without it the delete handler has no GUID.
       if (typeof api.queryTable === "function") {
-        const empResult = await api.queryTable(EMPLOYEE_TABLE, {
-          select: [EMPLOYEE_PK, "cr8f7_employeename", "cr8f7_employeeid1", "cr8f7_emailaddress", "cr8f7_jobtitle"],
-          pageSize: 5000,
-        });
+        const empResult = await api.queryTable(EMPLOYEE_TABLE, { select: EMPLOYEE_SELECT, pageSize: 5000 });
         employeeRecords = empResult?.rows || empResult?.entities || [];
       } else {
-        const empResult = await api.retrieveMultipleRecords(EMPLOYEE_TABLE, `?$select=${EMPLOYEE_PK},cr8f7_employeename,cr8f7_employeeid1,cr8f7_emailaddress,cr8f7_jobtitle`);
+        const empResult = await api.retrieveMultipleRecords(EMPLOYEE_TABLE, `?$select=${EMPLOYEE_SELECT.join(",")}`);
         employeeRecords = empResult?.entities || [];
       }
 
@@ -497,7 +512,7 @@ export default function GeneratedComponent(props: any) {
     const query = searchText.trim().toLowerCase();
     return employees.filter((emp) => {
       if (query) {
-        const haystack = [emp.cr8f7_employeeid1, emp.cr8f7_employeename, emp.cr8f7_emailaddress, emp.cr8f7_jobtitle]
+        const haystack = [emp.cr8f7_employeeid1, emp.cr8f7_employeename, emp.cr8f7_emailaddress, emp.cr8f7_jobtitle, emp.cr8f7_managername]
           .map((v) => String(v ?? "").toLowerCase());
         if (!haystack.some((h) => h.includes(query))) return false;
       }
@@ -540,6 +555,53 @@ export default function GeneratedComponent(props: any) {
 
   const setColumnFilter = (columnId: string, value: string) =>
     setColumnFilters((prev) => ({ ...prev, [columnId]: value }));
+
+  const orderedColumnIds = React.useMemo(
+    () => [...BASE_COLUMN_ORDER, ...uniqueSkills.map((s) => `skill_${s}`), "actions"],
+    [uniqueSkills]
+  );
+
+  const visibleColumnIds = React.useMemo(
+    () => orderedColumnIds.filter((id) => !hiddenColumns[id]),
+    [orderedColumnIds, hiddenColumns]
+  );
+
+  const hiddenCount = orderedColumnIds.length - visibleColumnIds.length;
+
+  // Hiding a column drops its filter too: leaving it active would keep filtering rows by a
+  // column that is no longer on screen, with no way to see or clear it.
+  const dropFilters = (columnIds: string[]) =>
+    setColumnFilters((prev) => {
+      const stale = columnIds.filter((id) => prev[id]);
+      if (stale.length === 0) return prev;
+      const next = { ...prev };
+      stale.forEach((id) => delete next[id]);
+      return next;
+    });
+
+  const toggleColumn = (columnId: string) => {
+    const willHide = !hiddenColumns[columnId];
+    setHiddenColumns((prev) => {
+      const next = { ...prev };
+      if (willHide) next[columnId] = true;
+      else delete next[columnId];
+      return next;
+    });
+    if (willHide) dropFilters([columnId]);
+  };
+
+  const setSkillColumnsHidden = (hidden: boolean) => {
+    const skillColumnIds = uniqueSkills.map((skill) => `skill_${skill}`);
+    setHiddenColumns((prev) => {
+      const next = { ...prev };
+      skillColumnIds.forEach((id) => {
+        if (hidden) next[id] = true;
+        else delete next[id];
+      });
+      return next;
+    });
+    if (hidden) dropFilters(skillColumnIds);
+  };
 
   const catalogueByName = React.useMemo(() => {
     const map = new Map<string, CatalogueSkill>();
@@ -591,6 +653,7 @@ export default function GeneratedComponent(props: any) {
       employeeid: t("employeeid"),
       email: t("email"),
       designation: t("designation"),
+      manager: t("manager"),
       actions: t("actions"),
     };
 
@@ -620,11 +683,12 @@ export default function GeneratedComponent(props: any) {
     });
 
     // Spread leftover room across the text columns so a narrow matrix fills the grid
-    // instead of leaving a dead gap down the right-hand side.
-    const total = Object.values(fitted).reduce((sum, width) => sum + width, 0);
+    // instead of leaving a dead gap down the right-hand side. Only visible columns count,
+    // or hiding a column would leave its width reserved as empty space.
+    const total = visibleColumnIds.reduce((sum, id) => sum + (fitted[id] ?? 0), 0);
     const slack = availableWidth - total - 2;
     if (slack > 0) {
-      const flexible = Object.keys(BASE_COLUMN_SIZING).filter((id) => BASE_COLUMN_SIZING[id].flexible);
+      const flexible = visibleColumnIds.filter((id) => BASE_COLUMN_SIZING[id]?.flexible);
       if (flexible.length > 0) {
         const share = Math.floor(slack / flexible.length);
         flexible.forEach((id) => { fitted[id] += share; });
@@ -632,7 +696,7 @@ export default function GeneratedComponent(props: any) {
     }
 
     return fitted;
-  }, [employees, uniqueSkills, availableWidth, measureText, t]);
+  }, [employees, uniqueSkills, availableWidth, measureText, t, visibleColumnIds]);
 
   const widthFor = React.useCallback(
     (columnId: string) => columnWidths[columnId] ?? SKILL_SIZING.min,
@@ -653,17 +717,18 @@ export default function GeneratedComponent(props: any) {
 
   const columnSizingOptions = React.useMemo(() => {
     const options: Record<string, { minWidth: number; defaultWidth: number; idealWidth: number }> = {};
-    Object.entries(columnWidths).forEach(([columnId, width]) => {
-      options[columnId] = { minWidth: width, defaultWidth: width, idealWidth: width };
+    visibleColumnIds.forEach((columnId) => {
+      const width = columnWidths[columnId];
+      if (width) options[columnId] = { minWidth: width, defaultWidth: width, idealWidth: width };
     });
     return options;
-  }, [columnWidths]);
+  }, [columnWidths, visibleColumnIds]);
 
   // Forces the table wider than its wrapper once the fitted columns exceed the viewport,
   // which is what actually makes the wrapper's horizontal scrollbar appear.
   const gridMinWidth = React.useMemo(
-    () => Object.values(columnWidths).reduce((sum, width) => sum + width, 0),
-    [columnWidths]
+    () => visibleColumnIds.reduce((sum, id) => sum + (columnWidths[id] ?? 0), 0),
+    [columnWidths, visibleColumnIds]
   );
 
   // Save modified ratings from Employee Edit Page
@@ -734,7 +799,8 @@ export default function GeneratedComponent(props: any) {
         cr8f7_employeename: formFields.empName,
         cr8f7_employeeid1: formFields.empId,
         cr8f7_emailaddress: formFields.empEmail,
-        cr8f7_jobtitle: formFields.empTitle
+        cr8f7_jobtitle: formFields.empTitle,
+        cr8f7_managername: formFields.empManager
       });
 
       const pending = Object.entries(formSkillRatings).filter(([, ratingValue]) =>
@@ -762,7 +828,7 @@ export default function GeneratedComponent(props: any) {
 
       setToastMessage({ text: t("createSuccess"), type: "success" });
       setShowForm(false);
-      setFormFields({ empName: "", empId: "", empEmail: "", empTitle: "" });
+      setFormFields({ empName: "", empId: "", empEmail: "", empTitle: "", empManager: "" });
       setFormSkillRatings({});
       await fetchMatrixData();
     } catch (err: any) {
@@ -1017,6 +1083,12 @@ export default function GeneratedComponent(props: any) {
       renderCell: (item: any) =>
         cellShell("designation", <Text size={300} style={cellTextStyle} title={item.cr8f7_jobtitle || ""}>{item.cr8f7_jobtitle || ""}</Text>),
     }),
+    createTableColumn({
+      columnId: "manager",
+      renderHeaderCell: () => renderTextFilterHeader("manager", t("manager")),
+      renderCell: (item: any) =>
+        cellShell("manager", <Text size={300} style={cellTextStyle} title={item.cr8f7_managername || ""}>{item.cr8f7_managername || ""}</Text>),
+    }),
   ];
 
   const skillColumns = uniqueSkills.map((skillName) => {
@@ -1077,6 +1149,11 @@ export default function GeneratedComponent(props: any) {
   ];
 
   const allColumns = [...baseColumns, ...skillColumns, ...actionColumn];
+
+  // DataGrid cannot render with an empty column set, so the last visible column is pinned
+  // on. The panel also disables its checkbox, this is the backstop.
+  const keptColumns = allColumns.filter((column) => !hiddenColumns[column.columnId as string]);
+  const shownColumns = keptColumns.length > 0 ? keptColumns : allColumns.slice(0, 1);
 
   const renderDeleteDialog = () => (
     <Dialog
@@ -1156,6 +1233,7 @@ export default function GeneratedComponent(props: any) {
                 <div style={cellTextStyle}><Text weight="semibold">ID: </Text>{selectedEmployee.cr8f7_employeeid1}</div>
                 <div style={cellTextStyle}><Text weight="semibold">Email: </Text>{selectedEmployee.cr8f7_emailaddress}</div>
                 <div style={cellTextStyle}><Text weight="semibold">Title: </Text>{selectedEmployee.cr8f7_jobtitle || "N/A"}</div>
+                <div style={cellTextStyle}><Text weight="semibold">Manager: </Text>{selectedEmployee.cr8f7_managername || "N/A"}</div>
               </div>
             }
           />
@@ -1204,6 +1282,14 @@ export default function GeneratedComponent(props: any) {
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
           <Button
             type="button"
+            appearance={showColumnPanel ? "primary" : "secondary"}
+            icon={<ColumnTriple16Regular />}
+            onClick={() => setShowColumnPanel(!showColumnPanel)}
+          >
+            {showColumnPanel ? t("hideColumnsPanel") : `${t("columns")}${hiddenCount > 0 ? ` (${hiddenCount} hidden)` : ""}`}
+          </Button>
+          <Button
+            type="button"
             appearance={showSkillForm ? "primary" : "secondary"}
             icon={<Add16Regular />}
             onClick={() => {
@@ -1233,6 +1319,67 @@ export default function GeneratedComponent(props: any) {
             {orphanSkills.length} {orphanSkills.length === 1 ? "skill has" : "skills have"} ratings recorded but no row in the skill catalogue, so {orphanSkills.length === 1 ? "it has" : "they have"} no column: {orphanSkills.join(", ")}. Add {orphanSkills.length === 1 ? "it" : "them"} with Add Skill to bring the {orphanSkills.length === 1 ? "column" : "columns"} back.
           </Text>
           <Button size="small" type="button" appearance="subtle" onClick={() => setOrphanSkills([])}>✕</Button>
+        </div>
+      )}
+
+      {showColumnPanel && (
+        <div style={{ marginBottom: 24, padding: 20, backgroundColor: "#faf9f8", borderRadius: 8, border: "1px solid #e0e0e0", boxShadow: "0 2px 8px rgba(0,0,0,0.05)" }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, flexWrap: "wrap", marginBottom: 4 }}>
+            <Text size={400} weight="bold">{t("columns")}</Text>
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+              <Button size="small" type="button" appearance="subtle" onClick={() => setHiddenColumns({})} disabled={hiddenCount === 0}>
+                {t("showAllColumns")}
+              </Button>
+              <Button size="small" type="button" appearance="subtle" onClick={() => setSkillColumnsHidden(true)} disabled={uniqueSkills.length === 0}>
+                {t("hideAllSkills")}
+              </Button>
+              <Button size="small" type="button" appearance="subtle" onClick={() => setSkillColumnsHidden(false)} disabled={uniqueSkills.length === 0}>
+                {t("showAllSkills")}
+              </Button>
+            </div>
+          </div>
+          <Text size={200} style={{ display: "block", marginBottom: 16, color: "#605e5c" }}>
+            Unticking a column hides it from the grid and clears any filter set on it. Nothing is deleted, and the choice applies to this session only.
+          </Text>
+
+          <Text size={300} weight="semibold" style={{ display: "block", marginBottom: 8, color: "#605e5c" }}>Employee details</Text>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(200px, 1fr))", gap: 8, marginBottom: 16 }}>
+            {[...BASE_COLUMN_ORDER, "actions"].map((columnId) => {
+              const isVisible = !hiddenColumns[columnId];
+              return (
+                <Checkbox
+                  key={columnId}
+                  label={t(columnId)}
+                  checked={isVisible}
+                  disabled={isVisible && visibleColumnIds.length === 1}
+                  onChange={() => toggleColumn(columnId)}
+                />
+              );
+            })}
+          </div>
+
+          {uniqueSkills.length > 0 && (
+            <>
+              <Text size={300} weight="semibold" style={{ display: "block", marginBottom: 8, color: "#605e5c" }}>
+                Skills ({uniqueSkills.length})
+              </Text>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(200px, 1fr))", gap: 8, maxHeight: "32vh", overflowY: "auto", paddingRight: 4 }}>
+                {uniqueSkills.map((skill) => {
+                  const columnId = `skill_${skill}`;
+                  const isVisible = !hiddenColumns[columnId];
+                  return (
+                    <Checkbox
+                      key={columnId}
+                      label={skill}
+                      checked={isVisible}
+                      disabled={isVisible && visibleColumnIds.length === 1}
+                      onChange={() => toggleColumn(columnId)}
+                    />
+                  );
+                })}
+              </div>
+            </>
+          )}
         </div>
       )}
 
@@ -1330,6 +1477,7 @@ export default function GeneratedComponent(props: any) {
               <Field label="Employee ID" required><Input value={formFields.empId} onChange={(_, d) => setFormFields(p => ({ ...p, empId: d.value }))} required /></Field>
               <Field label="Email Address" required><Input type="email" value={formFields.empEmail} onChange={(_, d) => setFormFields(p => ({ ...p, empEmail: d.value }))} required /></Field>
               <Field label="Designation / Job Title"><Input value={formFields.empTitle} onChange={(_, d) => setFormFields(p => ({ ...p, empTitle: d.value }))} /></Field>
+              <Field label="Manager"><Input value={formFields.empManager} onChange={(_, d) => setFormFields(p => ({ ...p, empManager: d.value }))} /></Field>
             </div>
 
             {uniqueSkills.length > 0 && (
@@ -1364,7 +1512,7 @@ export default function GeneratedComponent(props: any) {
           <div ref={gridWrapperRef} style={{ overflowX: "auto", overflowY: "auto", maxHeight: "62vh", border: "1px solid #e0e0e0", borderRadius: "8px", backgroundColor: "#ffffff" }}>
             <DataGrid
               items={pagedEmployees}
-              columns={allColumns}
+              columns={shownColumns}
               itemsPerGridRow={1}
               focusMode="row"
               resizableColumns
