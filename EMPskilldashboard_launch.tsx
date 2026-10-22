@@ -50,7 +50,14 @@ const translations: Record<string, Record<string, string>> = {
     clearFilters: "Clear filters",
     rowsPerPage: "Rows per page",
     previous: "Previous",
-    next: "Next"
+    next: "Next",
+    addSkill: "Add Skill",
+    hideSkillForm: "Hide Skill Panel",
+    skillSuccess: "Skill added to the catalogue:",
+    skillError: "Failed to add the new skill.",
+    skillMissing: "Both a skill name and an identifier are required.",
+    skillDuplicate: "A skill already exists with the name",
+    skillDuplicateId: "A skill already exists with the identifier"
   },
 };
 
@@ -59,7 +66,13 @@ const pageSizeOptions = [5, 10, 25, 50, 100];
 
 const EMPLOYEE_TABLE = "cr8f7_employee";
 const SKILL_TABLE = "cr8f7_employeeskill";
+const SKILL_CATALOGUE_TABLE = "cr8f7_skill";
 const EMPLOYEE_PK = "cr8f7_employeeid";
+
+// Dataverse identifiers are upper snake case; derived from the name so the user does not
+// have to invent one, but left editable because an existing coding scheme may differ.
+const deriveIdentifier = (name: string): string =>
+  name.trim().toUpperCase().replace(/[^A-Z0-9]+/g, "_").replace(/^_+|_+$/g, "").slice(0, 50);
 
 // Column id -> the Dataverse column its text filter reads.
 const BASE_FIELD_BY_COLUMN: Record<string, string> = {
@@ -165,6 +178,7 @@ export default function GeneratedComponent(props: any) {
 
   const [employees, setEmployees] = React.useState<any[]>([]);
   const [uniqueSkills, setUniqueSkills] = React.useState<string[]>([]);
+  const [skillCatalogue, setSkillCatalogue] = React.useState<{ name: string; identifier: string }[]>([]);
   const [loading, setLoading] = React.useState<boolean>(true);
   const [error, setError] = React.useState<string | null>(null);
   const [toastMessage, setToastMessage] = React.useState<{ text: string; type: "success" | "error" | "info" } | null>(null);
@@ -174,6 +188,12 @@ export default function GeneratedComponent(props: any) {
   const [isFormSubmitting, setIsFormSubmitting] = React.useState<boolean>(false);
   const [formFields, setFormFields] = React.useState({ empName: "", empId: "", empEmail: "", empTitle: "" });
   const [formSkillRatings, setFormSkillRatings] = React.useState<Record<string, string>>({});
+
+  // Add-a-skill panel
+  const [showSkillForm, setShowSkillForm] = React.useState<boolean>(false);
+  const [isSkillSubmitting, setIsSkillSubmitting] = React.useState<boolean>(false);
+  const [skillForm, setSkillForm] = React.useState({ name: "", identifier: "" });
+  const [identifierTouched, setIdentifierTouched] = React.useState<boolean>(false);
 
   // Search, per-column filters and paging
   const [searchText, setSearchText] = React.useState<string>("");
@@ -269,11 +289,46 @@ export default function GeneratedComponent(props: any) {
         skillRecords = skillResult?.entities || [];
       }
 
-      const dynamicSkillsSet = new Set<string>();
-      skillRecords.forEach((s: any) => {
-        if (s.cr8f7_skillname) dynamicSkillsSet.add(s.cr8f7_skillname.trim());
+      // The catalogue drives the columns, so a skill that nobody has been rated on yet still
+      // gets a column. A failure here must not blank the dashboard, so it falls back to the
+      // skills implied by the rating rows.
+      let catalogueRecords: any[] = [];
+      try {
+        if (typeof api.queryTable === "function") {
+          const catalogueResult = await api.queryTable(SKILL_CATALOGUE_TABLE, {
+            select: ["cr8f7_skillname", "cr8f7_skillidentifier"],
+            pageSize: 5000,
+          });
+          catalogueRecords = catalogueResult?.rows || catalogueResult?.entities || [];
+        } else {
+          const catalogueResult = await api.retrieveMultipleRecords(SKILL_CATALOGUE_TABLE, "?$select=cr8f7_skillname,cr8f7_skillidentifier");
+          catalogueRecords = catalogueResult?.entities || [];
+        }
+      } catch {
+        catalogueRecords = [];
+      }
+
+      setSkillCatalogue(
+        catalogueRecords
+          .map((r: any) => ({
+            name: String(r.cr8f7_skillname ?? "").trim(),
+            identifier: String(r.cr8f7_skillidentifier ?? "").trim(),
+          }))
+          .filter((s) => s.name)
+      );
+
+      // Keyed on lower case so "Java" in the catalogue and "java" on a rating row do not
+      // produce two columns for the same skill.
+      const skillByKey = new Map<string, string>();
+      catalogueRecords.forEach((r: any) => {
+        const name = String(r.cr8f7_skillname ?? "").trim();
+        if (name) skillByKey.set(name.toLowerCase(), name);
       });
-      const dynamicSkillsArray = Array.from(dynamicSkillsSet).sort();
+      skillRecords.forEach((s: any) => {
+        const name = String(s.cr8f7_skillname ?? "").trim();
+        if (name && !skillByKey.has(name.toLowerCase())) skillByKey.set(name.toLowerCase(), name);
+      });
+      const dynamicSkillsArray = Array.from(skillByKey.values()).sort((a, b) => a.localeCompare(b));
 
       const pivotedEmployees = employeeRecords.map((emp: any) => {
         const empIdVal = String(emp.cr8f7_employeeid1 || "").toLowerCase();
@@ -287,7 +342,8 @@ export default function GeneratedComponent(props: any) {
 
         const skillMappings: Record<string, string> = {};
         dynamicSkillsArray.forEach(skill => {
-          const latestSkillEntry = [...matchingSkills].reverse().find((s: any) => s.cr8f7_skillname?.trim() === skill);
+          const target = skill.toLowerCase();
+          const latestSkillEntry = [...matchingSkills].reverse().find((s: any) => String(s.cr8f7_skillname ?? "").trim().toLowerCase() === target);
           skillMappings[skill] = latestSkillEntry ? String(latestSkillEntry.cr8f7_skillrating ?? "-") : "-";
         });
 
@@ -579,6 +635,50 @@ export default function GeneratedComponent(props: any) {
     }
   };
 
+  const handleCreateSkillSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const writeApi = resolveWriteApi();
+    if (!writeApi) {
+      setToastMessage({ text: `${t("skillError")} (no write API found - host exposes: ${describeApis()})`, type: "error" });
+      return;
+    }
+
+    const name = skillForm.name.trim();
+    const identifier = (skillForm.identifier.trim() || deriveIdentifier(name));
+    if (!name || !identifier) {
+      setToastMessage({ text: t("skillMissing"), type: "error" });
+      return;
+    }
+
+    // The catalogue may have no alternate key, so duplicates are caught here rather than
+    // relying on the platform to reject them.
+    if (skillCatalogue.some((s) => s.name.toLowerCase() === name.toLowerCase())) {
+      setToastMessage({ text: `${t("skillDuplicate")} "${name}"`, type: "error" });
+      return;
+    }
+    if (skillCatalogue.some((s) => s.identifier && s.identifier.toLowerCase() === identifier.toLowerCase())) {
+      setToastMessage({ text: `${t("skillDuplicateId")} "${identifier}"`, type: "error" });
+      return;
+    }
+
+    setIsSkillSubmitting(true);
+    try {
+      await writeApi.create(SKILL_CATALOGUE_TABLE, {
+        cr8f7_skillname: name,
+        cr8f7_skillidentifier: identifier,
+      });
+      setToastMessage({ text: `${t("skillSuccess")} "${name}"`, type: "success" });
+      setSkillForm({ name: "", identifier: "" });
+      setIdentifierTouched(false);
+      setShowSkillForm(false);
+      await fetchMatrixData();
+    } catch (err: any) {
+      setToastMessage({ text: `${t("skillError")} (via ${writeApi.createdVia}: ${err?.message || "Dataverse Fault"})`, type: "error" });
+    } finally {
+      setIsSkillSubmitting(false);
+    }
+  };
+
   const handleDeleteEmployee = async (employeeRecord: any, e: React.MouseEvent) => {
     e.stopPropagation();
     const writeApi = resolveWriteApi();
@@ -698,19 +798,13 @@ export default function GeneratedComponent(props: any) {
         )),
       renderCell: (item: any) => {
         const currentRating = item[skillName] || "-";
-        const getPillStyle = (val: string): React.CSSProperties => {
-          const bs: React.CSSProperties = { width: "48px", height: "26px", borderRadius: "13px", display: "flex", alignItems: "center", justifyContent: "center", color: "#ffffff", fontWeight: "bold", fontSize: "14px", flexShrink: 0 };
-          switch (val) {
-            case "0": return { ...bs, backgroundColor: "#a19f9d" };
-            case "1": return { ...bs, backgroundColor: "#e81123" };
-            case "2": return { ...bs, backgroundColor: "#f7630c" };
-            case "3": return { ...bs, backgroundColor: "#ffb900" };
-            case "4": return { ...bs, backgroundColor: "#bad80a" };
-            case "5": return { ...bs, backgroundColor: "#107c41" };
-            default: return { ...bs, backgroundColor: "#f3f2f1", color: "#605e5c", fontWeight: "normal" };
-          }
-        };
-        return cellShell(columnId, <div style={getPillStyle(currentRating)}>{currentRating}</div>);
+        const isRated = currentRating !== "-";
+        return cellShell(
+          columnId,
+          <Text size={300} style={{ ...cellTextStyle, fontWeight: isRated ? 600 : 400, color: isRated ? "#323130" : "#a19f9d" }}>
+            {currentRating}
+          </Text>
+        );
       },
     });
   });
@@ -802,10 +896,60 @@ export default function GeneratedComponent(props: any) {
 
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16, borderBottom: "2px solid #f3f2f1", paddingBottom: "12px", gap: 12, flexWrap: "wrap" }}>
         <Text size={600} weight="bold" style={{ color: "#323130" }}>{t("employeesTitle")}</Text>
-        <Button type="button" appearance={showForm ? "secondary" : "primary"} icon={<Add16Regular />} onClick={() => setShowForm(!showForm)}>
-          {showForm ? t("hideForm") : t("addEmployee")}
-        </Button>
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+          <Button type="button" appearance={showSkillForm ? "primary" : "secondary"} icon={<Add16Regular />} onClick={() => setShowSkillForm(!showSkillForm)}>
+            {showSkillForm ? t("hideSkillForm") : t("addSkill")}
+          </Button>
+          <Button type="button" appearance={showForm ? "secondary" : "primary"} icon={<Add16Regular />} onClick={() => setShowForm(!showForm)}>
+            {showForm ? t("hideForm") : t("addEmployee")}
+          </Button>
+        </div>
       </div>
+
+      {showSkillForm && (
+        <div style={{ marginBottom: 24, padding: 20, backgroundColor: "#f6f9fc", borderRadius: 8, border: "1px solid #cfe3f5", boxShadow: "0 2px 8px rgba(0,0,0,0.05)" }}>
+          <Text size={400} weight="bold" style={{ display: "block", marginBottom: 4 }}>{t("addSkill")}</Text>
+          <Text size={200} style={{ display: "block", marginBottom: 16, color: "#605e5c" }}>
+            Added to the skill catalogue and appears as a new column straight away, unrated for every employee.
+          </Text>
+          <form onSubmit={handleCreateSkillSubmit}>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 16, marginBottom: 16 }}>
+              <Field label="Skill Name" required>
+                <Input
+                  value={skillForm.name}
+                  placeholder="e.g. Playwright"
+                  onChange={(_, d) => setSkillForm((p) => ({
+                    name: d.value,
+                    identifier: identifierTouched ? p.identifier : deriveIdentifier(d.value),
+                  }))}
+                  required
+                />
+              </Field>
+              <Field label="Skill Identifier" required hint="Auto-filled from the name. Edit if you use a different coding scheme.">
+                <Input
+                  value={skillForm.identifier}
+                  placeholder="e.g. PLAYWRIGHT"
+                  onChange={(_, d) => { setIdentifierTouched(true); setSkillForm((p) => ({ ...p, identifier: d.value })); }}
+                  required
+                />
+              </Field>
+            </div>
+            <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
+              <Button
+                type="button"
+                appearance="secondary"
+                disabled={isSkillSubmitting}
+                onClick={() => { setShowSkillForm(false); setSkillForm({ name: "", identifier: "" }); setIdentifierTouched(false); }}
+              >
+                Cancel
+              </Button>
+              <Button type="submit" appearance="primary" disabled={isSkillSubmitting || !skillForm.name.trim()}>
+                {isSkillSubmitting ? <Spinner size="tiny" label="Adding..." /> : t("addSkill")}
+              </Button>
+            </div>
+          </form>
+        </div>
+      )}
 
       <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 16, flexWrap: "wrap" }}>
         <Input
