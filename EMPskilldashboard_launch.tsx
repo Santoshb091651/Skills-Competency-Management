@@ -15,7 +15,13 @@ import {
   Field,
   Input,
   Card,
-  CardHeader
+  CardHeader,
+  Dialog,
+  DialogSurface,
+  DialogBody,
+  DialogTitle,
+  DialogContent,
+  DialogActions
 } from "@fluentui/react-components";
 import { Add16Regular, Delete16Regular, ArrowLeft16Regular, Save16Regular, Dismiss16Regular, ChevronLeft16Regular, ChevronRight16Regular } from "@fluentui/react-icons";
 
@@ -57,7 +63,13 @@ const translations: Record<string, Record<string, string>> = {
     skillError: "Failed to add the new skill.",
     skillMissing: "A skill name and a whole-number identifier are required.",
     skillDuplicate: "A skill already exists with the name",
-    skillDuplicateId: "A skill already exists with the identifier"
+    skillDuplicateId: "A skill already exists with the identifier",
+    skillDeleteSuccess: "Skill removed from the catalogue:",
+    skillDeleteError: "Failed to delete the skill.",
+    deleteSkillTitle: "Delete skill",
+    deleteEmployeeTitle: "Delete employee",
+    cancel: "Cancel",
+    confirmDelete: "Delete"
   },
 };
 
@@ -68,9 +80,43 @@ const EMPLOYEE_TABLE = "cr8f7_employee";
 const SKILL_TABLE = "cr8f7_employeeskill";
 const SKILL_CATALOGUE_TABLE = "cr8f7_skill";
 const EMPLOYEE_PK = "cr8f7_employeeid";
+const SKILL_CATALOGUE_PK = "cr8f7_skillid";
 
 // cr8f7_skillidentifier is a Whole Number column (Edm.Int32), not text. Posting a string
 // into it fails with "Cannot convert the literal ... to the expected type 'Edm.Int32'".
+
+// Single-hue ramp so the rating reads as an intensity rather than a pass/fail judgement.
+// 0 and 1 are too pale to carry white text, so the foreground flips only from 4 upwards;
+// every pair below is at least 4.5:1.
+const RATING_PALETTE: Record<string, { bg: string; fg: string; border: string }> = {
+  "0": { bg: "#f0f7f2", fg: "#3b5a46", border: "#cfe0d5" },
+  "1": { bg: "#d9ecdf", fg: "#20492f", border: "#bcdcc6" },
+  "2": { bg: "#b3dcc1", fg: "#17422a", border: "#99cfab" },
+  "3": { bg: "#82c79b", fg: "#103c23", border: "#6bb888" },
+  "4": { bg: "#1f7a46", fg: "#ffffff", border: "#1f7a46" },
+  "5": { bg: "#0f5c33", fg: "#ffffff", border: "#0f5c33" },
+};
+
+const ratingBadgeStyle = (rating: string): React.CSSProperties => {
+  const tone = RATING_PALETTE[rating];
+  if (!tone) {
+    return { display: "inline-block", padding: "2px 6px", color: "#a19f9d", fontWeight: 400, fontSize: 13, lineHeight: "18px" };
+  }
+  return {
+    display: "inline-block",
+    minWidth: 24,
+    padding: "2px 9px",
+    borderRadius: 10,
+    textAlign: "center",
+    fontWeight: 600,
+    fontSize: 13,
+    lineHeight: "18px",
+    backgroundColor: tone.bg,
+    color: tone.fg,
+    border: `1px solid ${tone.border}`,
+    boxSizing: "border-box",
+  };
+};
 
 // Hosts wrap Dataverse faults differently and err.message is often just "Request failed".
 // The privilege name or the offending column sits further down, so dig through the shapes
@@ -127,7 +173,8 @@ const BASE_COLUMN_SIZING: Record<string, ColumnSizing> = {
   designation: { min: 150, max: 260, chrome: 28, flexible: true },
   actions: { min: 80, max: 80, chrome: 0, flexible: false },
 };
-const SKILL_SIZING: ColumnSizing = { min: 112, max: 200, chrome: 28, flexible: false };
+// chrome leaves room for the header's delete button alongside the skill name.
+const SKILL_SIZING: ColumnSizing = { min: 124, max: 210, chrome: 52, flexible: false };
 const CELL_PADDING_X = 24;
 
 // Host method names probed in order. The host that runs a published page does not
@@ -140,6 +187,15 @@ type WriteApi = {
   remove: (table: string, id: string) => Promise<any>;
   createdVia: string;
 };
+
+// id is null when the catalogue had to be read without its primary key, which is the one
+// case where a skill is listed but cannot be deleted.
+type CatalogueSkill = { name: string; identifier: number | null; id: string | null };
+
+// Both deletes go through one dialog, so the copy differs but the mechanism does not.
+type PendingDelete =
+  | { kind: "employee"; id: string; label: string; rowKey: string }
+  | { kind: "skill"; id: string | null; label: string; ratedCount: number };
 
 // The page host gives the component a fixed-height box and clips the overflow, so the
 // root of every view owns its own scrolling.
@@ -207,13 +263,16 @@ export default function GeneratedComponent(props: any) {
 
   const [employees, setEmployees] = React.useState<any[]>([]);
   const [uniqueSkills, setUniqueSkills] = React.useState<string[]>([]);
-  const [skillCatalogue, setSkillCatalogue] = React.useState<{ name: string; identifier: number | null }[]>([]);
+  const [skillCatalogue, setSkillCatalogue] = React.useState<CatalogueSkill[]>([]);
   const [catalogueWarning, setCatalogueWarning] = React.useState<string | null>(null);
+  const [orphanSkills, setOrphanSkills] = React.useState<string[]>([]);
   const [loading, setLoading] = React.useState<boolean>(true);
   const [error, setError] = React.useState<string | null>(null);
   const [toastMessage, setToastMessage] = React.useState<{ text: string; type: "success" | "error" | "info" } | null>(null);
 
   const [deletingId, setDeletingId] = React.useState<string | null>(null);
+  const [pendingDelete, setPendingDelete] = React.useState<PendingDelete | null>(null);
+  const [isDeleting, setIsDeleting] = React.useState<boolean>(false);
   const [showForm, setShowForm] = React.useState<boolean>(false);
   const [isFormSubmitting, setIsFormSubmitting] = React.useState<boolean>(false);
   const [formFields, setFormFields] = React.useState({ empName: "", empId: "", empEmail: "", empTitle: "" });
@@ -323,24 +382,34 @@ export default function GeneratedComponent(props: any) {
       // The catalogue drives the columns, so a skill that nobody has been rated on yet still
       // gets a column. A failure here must not blank the dashboard, so it falls back to the
       // skills implied by the rating rows.
+      const readCatalogue = async (withKey: boolean): Promise<any[]> => {
+        const select = withKey
+          ? [SKILL_CATALOGUE_PK, "cr8f7_skillname", "cr8f7_skillidentifier"]
+          : ["cr8f7_skillname", "cr8f7_skillidentifier"];
+        if (typeof api.queryTable === "function") {
+          const result = await api.queryTable(SKILL_CATALOGUE_TABLE, { select, pageSize: 5000 });
+          return result?.rows || result?.entities || [];
+        }
+        const result = await api.retrieveMultipleRecords(SKILL_CATALOGUE_TABLE, `?$select=${select.join(",")}`);
+        return result?.entities || [];
+      };
+
+      // Deleting needs the row GUID, but a wrong primary key name fails the whole read and
+      // would cost us the columns, so drop back to the name-only read rather than lose them.
       let catalogueRecords: any[] = [];
       setCatalogueWarning(null);
       try {
-        if (typeof api.queryTable === "function") {
-          const catalogueResult = await api.queryTable(SKILL_CATALOGUE_TABLE, {
-            select: ["cr8f7_skillname", "cr8f7_skillidentifier"],
-            pageSize: 5000,
-          });
-          catalogueRecords = catalogueResult?.rows || catalogueResult?.entities || [];
-        } else {
-          const catalogueResult = await api.retrieveMultipleRecords(SKILL_CATALOGUE_TABLE, "?$select=cr8f7_skillname,cr8f7_skillidentifier");
-          catalogueRecords = catalogueResult?.entities || [];
+        catalogueRecords = await readCatalogue(true);
+      } catch (keyError: any) {
+        try {
+          catalogueRecords = await readCatalogue(false);
+          setCatalogueWarning(`The skill catalogue loaded without its primary key (${SKILL_CATALOGUE_PK}), so deleting a skill is unavailable: ${describeError(keyError)}`);
+        } catch (catalogueError: any) {
+          // Previously swallowed. If the catalogue cannot be read, the same table name and
+          // privileges are about to fail the write too, so say so instead of hiding it.
+          catalogueRecords = [];
+          setCatalogueWarning(`Could not read the skill catalogue (${SKILL_CATALOGUE_TABLE}): ${describeError(catalogueError)} Columns are falling back to skills found on existing rating rows, and adding a new skill will fail for the same reason.`);
         }
-      } catch (catalogueError: any) {
-        // Previously swallowed. If the catalogue cannot be read, the same table name and
-        // privileges are about to fail the write too, so say so instead of hiding it.
-        catalogueRecords = [];
-        setCatalogueWarning(`Could not read the skill catalogue (${SKILL_CATALOGUE_TABLE}): ${describeError(catalogueError)}`);
       }
 
       setSkillCatalogue(
@@ -351,23 +420,38 @@ export default function GeneratedComponent(props: any) {
             return {
               name: String(r.cr8f7_skillname ?? "").trim(),
               identifier: Number.isFinite(parsed) ? parsed : null,
+              id: r[SKILL_CATALOGUE_PK] ?? r.id ?? r.rowId ?? null,
             };
           })
           .filter((s) => s.name)
       );
 
-      // Keyed on lower case so "Java" in the catalogue and "java" on a rating row do not
-      // produce two columns for the same skill.
-      const skillByKey = new Map<string, string>();
+      // Keyed on lower case so "Java" in the catalogue and "java" on a rating row are not
+      // treated as two different skills.
+      const catalogueNames = new Map<string, string>();
       catalogueRecords.forEach((r: any) => {
         const name = String(r.cr8f7_skillname ?? "").trim();
-        if (name) skillByKey.set(name.toLowerCase(), name);
+        if (name) catalogueNames.set(name.toLowerCase(), name);
       });
+      const ratedNames = new Map<string, string>();
       skillRecords.forEach((s: any) => {
         const name = String(s.cr8f7_skillname ?? "").trim();
-        if (name && !skillByKey.has(name.toLowerCase())) skillByKey.set(name.toLowerCase(), name);
+        if (name) ratedNames.set(name.toLowerCase(), name);
       });
-      const dynamicSkillsArray = Array.from(skillByKey.values()).sort((a, b) => a.localeCompare(b));
+
+      // The catalogue is the source of truth for which columns exist. Merging in skills seen
+      // only on rating rows would resurrect a column the moment a skill is deleted, so those
+      // are reported separately instead and used only when the catalogue is unusable.
+      let columnNames = catalogueNames;
+      if (catalogueNames.size > 0) {
+        const orphans: string[] = [];
+        ratedNames.forEach((name, key) => { if (!catalogueNames.has(key)) orphans.push(name); });
+        setOrphanSkills(orphans.sort((a, b) => a.localeCompare(b)));
+      } else {
+        columnNames = ratedNames;
+        setOrphanSkills([]);
+      }
+      const dynamicSkillsArray = Array.from(columnNames.values()).sort((a, b) => a.localeCompare(b));
 
       const pivotedEmployees = employeeRecords.map((emp: any) => {
         const empIdVal = String(emp.cr8f7_employeeid1 || "").toLowerCase();
@@ -456,6 +540,12 @@ export default function GeneratedComponent(props: any) {
 
   const setColumnFilter = (columnId: string, value: string) =>
     setColumnFilters((prev) => ({ ...prev, [columnId]: value }));
+
+  const catalogueByName = React.useMemo(() => {
+    const map = new Map<string, CatalogueSkill>();
+    skillCatalogue.forEach((s) => map.set(s.name.toLowerCase(), s));
+    return map;
+  }, [skillCatalogue]);
 
   // Identifier is a number, so the sensible default is one past the highest in use.
   const nextSkillIdentifier = React.useMemo(() => {
@@ -784,31 +874,78 @@ export default function GeneratedComponent(props: any) {
     }
   };
 
-  const handleDeleteEmployee = async (employeeRecord: any, e: React.MouseEvent) => {
+  // window.confirm is not used: a sandboxed host iframe without allow-modals makes it
+  // return false without ever showing a prompt, so the delete would silently do nothing.
+  const requestDeleteEmployee = (employeeRecord: any, e: React.MouseEvent) => {
     e.stopPropagation();
-    const writeApi = resolveWriteApi();
-    if (!writeApi) {
-      setToastMessage({ text: `${t("deleteError")} (no write API found - host exposes: ${describeApis()})`, type: "error" });
-      return;
-    }
-
     const targetGuid = employeeRecord[EMPLOYEE_PK] || employeeRecord.id || employeeRecord.rowId;
     if (!targetGuid) {
       setToastMessage({ text: `Missing unique identifier Guid. Row keys: ${Object.keys(employeeRecord).join(", ")}`, type: "error" });
       return;
     }
+    setPendingDelete({
+      kind: "employee",
+      id: targetGuid,
+      label: employeeRecord.cr8f7_employeename || employeeRecord.cr8f7_employeeid1 || "this employee",
+      rowKey: employeeRecord.cr8f7_employeeid1,
+    });
+  };
 
-    if (!window.confirm(`Are you sure you want to permanently delete ${employeeRecord.cr8f7_employeename}?`)) return;
+  const requestDeleteSkill = (skillName: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    const entry = catalogueByName.get(skillName.toLowerCase());
+    setPendingDelete({
+      kind: "skill",
+      id: entry?.id ?? null,
+      label: skillName,
+      ratedCount: employees.filter((emp) => String(emp[skillName] ?? "-") !== "-").length,
+    });
+  };
 
-    setDeletingId(employeeRecord.cr8f7_employeeid1);
+  const confirmPendingDelete = async () => {
+    if (!pendingDelete) return;
+    const isEmployee = pendingDelete.kind === "employee";
+    const failPrefix = isEmployee ? t("deleteError") : t("skillDeleteError");
+
+    const writeApi = resolveWriteApi();
+    if (!writeApi) {
+      setToastMessage({ text: `${failPrefix} (no write API found - host exposes: ${describeApis()})`, type: "error" });
+      setPendingDelete(null);
+      return;
+    }
+    if (!pendingDelete.id) {
+      setToastMessage({ text: `${failPrefix} The row GUID is missing, so there is nothing to delete against.`, type: "error" });
+      setPendingDelete(null);
+      return;
+    }
+
+    setIsDeleting(true);
+    if (pendingDelete.kind === "employee") setDeletingId(pendingDelete.rowKey);
     try {
-      await writeApi.remove(EMPLOYEE_TABLE, targetGuid);
-      setToastMessage({ text: t("deleteSuccess"), type: "success" });
+      await writeApi.remove(isEmployee ? EMPLOYEE_TABLE : SKILL_CATALOGUE_TABLE, pendingDelete.id);
+      if (isEmployee) {
+        setToastMessage({ text: t("deleteSuccess"), type: "success" });
+      } else {
+        // A filter left on the removed column would keep filtering rows on a skill that is
+        // no longer there, so it goes with it.
+        const removedColumnId = `skill_${pendingDelete.label}`;
+        setColumnFilters((prev) => {
+          if (!(removedColumnId in prev)) return prev;
+          const next = { ...prev };
+          delete next[removedColumnId];
+          return next;
+        });
+        setToastMessage({ text: `${t("skillDeleteSuccess")} "${pendingDelete.label}"`, type: "success" });
+      }
       await fetchMatrixData();
     } catch (err: any) {
-      setToastMessage({ text: `${t("deleteError")} (${describeError(err)})`, type: "error" });
+      setToastMessage({ text: `${failPrefix} (via ${writeApi.createdVia}: ${describeError(err)})`, type: "error" });
     } finally {
+      // Closed on failure as well: the toast renders behind the modal, so leaving the
+      // dialog open would hide the reason the delete did not work.
+      setIsDeleting(false);
       setDeletingId(null);
+      setPendingDelete(null);
     }
   };
 
@@ -884,12 +1021,29 @@ export default function GeneratedComponent(props: any) {
 
   const skillColumns = uniqueSkills.map((skillName) => {
     const columnId = `skill_${skillName}`;
+    // Only a catalogue row can be deleted. A skill that exists purely on rating rows has
+    // nothing to delete, so it gets no button rather than a button that always fails.
+    const isDeletable = Boolean(catalogueByName.get(skillName.toLowerCase())?.id);
     return createTableColumn({
       columnId,
       renderHeaderCell: () =>
         headerShell(columnId, (
           <>
-            <Text weight="bold" size={200} style={cellTextStyle} title={skillName}>{skillName}</Text>
+            <div style={{ display: "flex", alignItems: "flex-start", gap: 2, width: "100%", minWidth: 0 }}>
+              <Text weight="bold" size={200} style={{ ...cellTextStyle, flex: 1, minWidth: 0 }} title={skillName}>{skillName}</Text>
+              {isDeletable && (
+                <Button
+                  size="small"
+                  type="button"
+                  appearance="subtle"
+                  icon={<Delete16Regular />}
+                  title={`${t("deleteSkillTitle")}: ${skillName}`}
+                  aria-label={`${t("deleteSkillTitle")}: ${skillName}`}
+                  style={{ minWidth: 22, width: 22, height: 22, padding: 0, flexShrink: 0, color: "#a80000" }}
+                  onClick={(e) => requestDeleteSkill(skillName, e)}
+                />
+              )}
+            </div>
             <Select
               size="small"
               value={columnFilters[columnId] || ""}
@@ -902,13 +1056,10 @@ export default function GeneratedComponent(props: any) {
           </>
         )),
       renderCell: (item: any) => {
-        const currentRating = item[skillName] || "-";
-        const isRated = currentRating !== "-";
+        const currentRating = String(item[skillName] ?? "-") || "-";
         return cellShell(
           columnId,
-          <Text size={300} style={{ ...cellTextStyle, fontWeight: isRated ? 600 : 400, color: isRated ? "#323130" : "#a19f9d" }}>
-            {currentRating}
-          </Text>
+          <span style={ratingBadgeStyle(currentRating)} title={`${skillName}: ${currentRating}`}>{currentRating}</span>
         );
       },
     });
@@ -920,12 +1071,59 @@ export default function GeneratedComponent(props: any) {
       renderHeaderCell: () => headerShell("actions", <Text weight="bold" style={cellTextStyle}>{t("actions")}</Text>),
       renderCell: (item: any) =>
         cellShell("actions", deletingId === item.cr8f7_employeeid1 ? <Spinner size="tiny" /> : (
-          <Button size="small" type="button" appearance="subtle" icon={<Delete16Regular />} style={{ color: "#a80000" }} onClick={(e) => handleDeleteEmployee(item, e)} />
+          <Button size="small" type="button" appearance="subtle" icon={<Delete16Regular />} style={{ color: "#a80000" }} onClick={(e) => requestDeleteEmployee(item, e)} />
         )),
     })
   ];
 
   const allColumns = [...baseColumns, ...skillColumns, ...actionColumn];
+
+  const renderDeleteDialog = () => (
+    <Dialog
+      open={pendingDelete !== null}
+      modalType="alert"
+      onOpenChange={(_, data) => { if (!data.open && !isDeleting) setPendingDelete(null); }}
+    >
+      <DialogSurface>
+        <DialogBody>
+          <DialogTitle>
+            {pendingDelete?.kind === "skill" ? t("deleteSkillTitle") : t("deleteEmployeeTitle")}
+          </DialogTitle>
+          <DialogContent>
+            {pendingDelete?.kind === "skill" ? (
+              <>
+                <Text block>
+                  Delete <Text weight="semibold">{pendingDelete.label}</Text> from the skill catalogue? Its column is removed from the dashboard.
+                </Text>
+                <Text block size={200} style={{ marginTop: 12, color: "#605e5c" }}>
+                  {pendingDelete.ratedCount > 0
+                    ? `${pendingDelete.ratedCount} ${pendingDelete.ratedCount === 1 ? "employee has" : "employees have"} a rating for this skill. Those rating records are kept, so adding the skill back restores the column with its ratings intact.`
+                    : "No employee has been rated on this skill, so nothing else is affected."}
+                </Text>
+              </>
+            ) : (
+              <>
+                <Text block>
+                  Permanently delete <Text weight="semibold">{pendingDelete?.label}</Text>?
+                </Text>
+                <Text block size={200} style={{ marginTop: 12, color: "#605e5c" }}>
+                  This removes the employee record. It cannot be undone.
+                </Text>
+              </>
+            )}
+          </DialogContent>
+          <DialogActions>
+            <Button type="button" appearance="secondary" disabled={isDeleting} onClick={() => setPendingDelete(null)}>
+              {t("cancel")}
+            </Button>
+            <Button type="button" appearance="primary" disabled={isDeleting} onClick={confirmPendingDelete} style={{ backgroundColor: isDeleting ? undefined : "#a80000" }}>
+              {isDeleting ? <Spinner size="tiny" label="Deleting..." /> : t("confirmDelete")}
+            </Button>
+          </DialogActions>
+        </DialogBody>
+      </DialogSurface>
+    </Dialog>
+  );
 
   const renderToast = () => toastMessage && (
     <div style={{ marginBottom: 16, padding: "10px 16px", borderRadius: "4px", fontSize: "14px", fontWeight: "500", backgroundColor: toastMessage.type === "success" ? "#dff6dd" : toastMessage.type === "info" ? "#f3f2f1" : "#fde7e9", color: toastMessage.type === "success" ? "#107c41" : toastMessage.type === "info" ? "#323130" : "#a80000", border: "1px solid #e0e0e0", display: "flex", justifyContent: "space-between", alignItems: "center", gap: "12px" }}>
@@ -973,7 +1171,8 @@ export default function GeneratedComponent(props: any) {
                   <div key={skill} style={{ display: "flex", flexDirection: "column", gap: "6px", padding: "12px", backgroundColor: "#faf9f8", borderRadius: "6px", border: "1px solid #f3f2f1" }}>
                     <Text weight="medium" size={300} style={cellTextStyle} title={skill}>{skill}</Text>
                     <div style={{ display: "flex", gap: "10px", alignItems: "center", marginTop: "4px", flexWrap: "wrap" }}>
-                      <Text size={200} style={{ color: "#605e5c" }}>Current: <Text weight="bold">{currentVal}</Text></Text>
+                      <Text size={200} style={{ color: "#605e5c" }}>Current:</Text>
+                      <span style={ratingBadgeStyle(String(currentVal))}>{currentVal}</span>
                       <Select size="small" style={{ flexGrow: 1, minWidth: 90 }} value={detailSkillRatings[skill] ?? currentVal} onChange={(_, data) => setDetailSkillRatings(prev => ({ ...prev, [skill]: data.value }))}>
                         <option value="-">-</option>
                         {ratingOptions.map(opt => <option key={opt} value={opt}>{opt}</option>)}
@@ -998,6 +1197,7 @@ export default function GeneratedComponent(props: any) {
   return (
     <div dir={isRTL ? "rtl" : "ltr"} style={pageScrollStyle}>
       {renderToast()}
+      {renderDeleteDialog()}
 
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16, borderBottom: "2px solid #f3f2f1", paddingBottom: "12px", gap: 12, flexWrap: "wrap" }}>
         <Text size={600} weight="bold" style={{ color: "#323130" }}>{t("employeesTitle")}</Text>
@@ -1022,10 +1222,17 @@ export default function GeneratedComponent(props: any) {
 
       {catalogueWarning && (
         <div style={{ marginBottom: 16, padding: "10px 16px", borderRadius: 4, backgroundColor: "#fff4ce", border: "1px solid #f2d783", display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12 }}>
-          <Text size={200} style={{ color: "#6b5900", wordBreak: "break-word" }}>
-            {catalogueWarning} Columns are falling back to skills found on existing rating rows, and adding a new skill will fail for the same reason.
-          </Text>
+          <Text size={200} style={{ color: "#6b5900", wordBreak: "break-word" }}>{catalogueWarning}</Text>
           <Button size="small" type="button" appearance="subtle" onClick={() => setCatalogueWarning(null)}>✕</Button>
+        </div>
+      )}
+
+      {orphanSkills.length > 0 && (
+        <div style={{ marginBottom: 16, padding: "10px 16px", borderRadius: 4, backgroundColor: "#eff6fc", border: "1px solid #c7e0f4", display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12 }}>
+          <Text size={200} style={{ color: "#204d78", wordBreak: "break-word" }}>
+            {orphanSkills.length} {orphanSkills.length === 1 ? "skill has" : "skills have"} ratings recorded but no row in the skill catalogue, so {orphanSkills.length === 1 ? "it has" : "they have"} no column: {orphanSkills.join(", ")}. Add {orphanSkills.length === 1 ? "it" : "them"} with Add Skill to bring the {orphanSkills.length === 1 ? "column" : "columns"} back.
+          </Text>
+          <Button size="small" type="button" appearance="subtle" onClick={() => setOrphanSkills([])}>✕</Button>
         </div>
       )}
 
@@ -1102,7 +1309,13 @@ export default function GeneratedComponent(props: any) {
             {t("clearFilters")}
           </Button>
         )}
-        <Text size={200} style={{ color: "#605e5c", marginLeft: "auto" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 6, marginLeft: "auto" }}>
+          <Text size={200} style={{ color: "#605e5c" }}>Rating</Text>
+          {ratingOptions.map((opt) => (
+            <span key={opt} style={{ ...ratingBadgeStyle(opt), minWidth: 22, padding: "1px 7px", fontSize: 12 }}>{opt}</span>
+          ))}
+        </div>
+        <Text size={200} style={{ color: "#605e5c" }}>
           {totalRows} {totalRows === 1 ? "employee" : "employees"}
           {hasActiveFilters ? ` (filtered from ${employees.length})` : ""}
         </Text>
